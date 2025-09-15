@@ -1,0 +1,352 @@
+---
+title: "Comparison of subsequent time-points to time zero (first day of cold) in SAM"
+format: html
+date: "2025-07-09"
+bibliography: refs-stat-anal.bib
+execute:
+  eval: false
+  fig-format: png
+  fig.dpi: 300
+---
+
+:::{.callout-note}
+For html creation purposes I've turned off code execution.
+:::
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/sam/scripts")
+```
+
+Built with R version `r getRversion()`
+
+## Rationale
+
+Using only subset of data for SAM and design matrix to extract interesting comparisons.
+
+We have four days, two of which are cold (c1, c2) and two of which are warm (r1, r2 "regrowth") with one-day break (b).
+
+c1 - c2 - b - r1 - r2
+
+:::{.callout-note}
+For *historical* reasons the following names will be used
+
+d1 - d2 - b - d3 - d4
+:::
+
+In each day we have three samples: dawn, day, and dusk.
+
+c1[dawn, day, dusk] - c2[dawn, day, dusk] - b - r1[dawn, day, dusk] - r2[dawn, day, dusk]
+
+And we want to compare:
+
+c2[dawn, day, dusk] *vs* c1[dawn, day, dusk]
+r1[dawn, day, dusk] *vs* c1[dawn, day, dusk]
+r2[dawn, day, dusk] *vs* c1[dawn, day, dusk]
+
+So in all there are 12 time points and we have 9 comparisons.
+
+There are four inbred lines so the same analysis must be dona for each.
+
+`DESeq2` package will be used [@loveModeratedEstimationFold2014].
+The analysis is based on [RNA-seq workflow at the gene level](https://bioconductor.org/packages/release/workflows/vignettes/rnaseqGene/inst/doc/rnaseqGene.html) and [Analyzing RNA-seq data with DESeq2](https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#differential-expression-analysis)
+
+Environment cleaning and set-up
+```{r}
+#| eval: false
+#| output: false
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+# Clean working directory
+rm(list=ls())
+```
+
+## Environment set-up
+
+```{r install packages}
+#| eval: false
+#| output: false
+#| message: false
+# Install required packages if not done previously
+## From Bioconductor
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("GenomicRanges")
+BiocManager::install("DESeq2")
+BiocManager::install("genefilter")
+BiocManager::install("apeglm")
+
+## From CRAN
+install.packages("pheatmap")
+install.packages("RColorBrewer")
+install.packages("viridis")
+install.packages("PoiClaClu")
+install.packages("glmpca")
+install.packages("ggplot2")
+install.packages("dplyr")
+install.packages("ashr")
+```
+
+## Data preprocessing
+
+### Load raw count data
+
+Full dataset from cold + regrowth
+
+```{r read data, cache=TRUE}
+load("../../../input-data/rdata/counts_and_metadata.RDa")
+
+# previously prepared range data
+library("GenomicRanges")
+load("../../../input-data/rdata/ranges.RDa")
+
+# Check if files are in concert
+all(rownames(coldata) %in% colnames(cts))
+all(rownames(coldata) == colnames(cts))
+```
+
+### Subset SAM data
+
+Subsetting is done at the level of raw data (counts and coldata).
+```{r subset SAM data}
+# subset coldata to contain only sam data
+coldata.sam=subset(coldata, tissue=="sam")
+
+# check
+dim(coldata.sam)
+
+# vector of sample names to keep - needed to select columns from count file
+keep.sam=rownames(coldata.sam)
+
+# check - only samples named "s..." should remain
+keep.sam
+length(keep.sam)
+
+# subsetting counts
+cts.sam=subset(cts, select=keep.sam)
+
+# check
+dim(cts.sam)
+colnames(cts.sam)
+
+# Check if counts and coldata are in concert
+all(rownames(coldata.sam) %in% colnames(cts.sam))
+all(rownames(coldata.sam) == colnames(cts.sam))
+```
+
+### Create DESeq2 object for SAM only
+
+```{r create DESeq2 object, cache=TRUE}
+library("DESeq2")
+#| output: false
+#| message: false
+
+# Adding grouping variable to easily analyse all comparisons needed
+coldata.sam$group <- factor(paste0(coldata.sam$line, "_d", coldata.sam$day, "_t", coldata.sam$time))
+
+# simple design with group
+# according to 
+# https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#interactions
+
+dds=DESeqDataSetFromMatrix(countData=cts.sam, colData=coldata.sam, rowRanges=gzakresy, design= ~ 0 + group)
+
+```
+
+### Pre-filtering
+
+```{r pre-filtering, cache=TRUE}
+# at least 3 samples with a count of 10 or higher
+keep <- rowSums(counts(dds) >= 10) >= 3
+dds.f <- dds[keep,]
+
+# check
+dim(dds.f)
+
+# what percent of genes remained?
+100*(dim(dds.f)[1]/dim(dds)[1])
+```
+
+## Analysis
+
+### Test
+
+
+```{r analysis, cache=TRUE}
+#| eval: false
+
+# parallelization setup
+## otherwise test runs very long
+
+library("BiocParallel")
+register(MulticoreParam(8))
+
+# analysis using simple design already specified in dds.f
+dds.f <- DESeq(dds.f, parallel = TRUE)
+```
+
+### Environment cleanup
+
+```{r env cleanup}
+# save workspace
+save.image("../rdata-saved/deseq_cold_SAM.RDa")
+
+# remove everything except for the DESeq2 object with results
+rm(list= ls()[!(ls() %in% c('dds.f'))])
+
+# genes forom the following object will be used as background in GO enrichemnt analysis
+save(dds.f, file="../rdata-saved/dds.f.RDa")
+```
+
+### Selecting interesting comparisons
+
+For logFC shrinkage `ashr` is used [@stephensFalseDiscoveryRates2016] instead of `apeglm` as the latter doesn't support contrasts.
+
+```{r contrasts}
+#| eval: false
+# using log fold change shrinkage (substitutes results function)
+
+# vector of lines and times
+
+lines = c("a554", "s018", "s84", "s311")
+
+times = c("t1", "t2", "t3")
+
+for (line in lines){
+  for (time in times){
+  
+    # Names from resultsNames
+    
+    trt_d2 <- paste0("group", line, "_d2_", time)
+    trt_d3 <- paste0("group", line, "_d3_", time)
+    trt_d4 <- paste0("group", line, "_d4_", time)
+    
+    ref <- paste0("group", line, "_d1_", time)
+    
+    # Names for result objects
+    
+    res_d2 <- paste0(line, "_d2d1_", time)
+    res_d3 <- paste0(line, "_d3d1_", time)
+    res_d4 <- paste0(line, "_d4d1_", time)
+    
+    ## cold 2 vs cold 1
+    
+    res=lfcShrink(dds.f, contrast=list(trt_d2, ref), type="ashr")
+    
+    # Check
+    summary(res)
+    
+    # Save object to .GlobalEnv
+    assign(res_d2, res, envir = .GlobalEnv)
+    
+    ## regr 1 vs cold 1
+    
+    res=lfcShrink(dds.f, contrast=list(trt_d3, ref), type="ashr")
+    
+    # Check
+    summary(res)
+    
+    # Save object to .GlobalEnv
+    assign(res_d3, res, envir = .GlobalEnv)
+    
+    ## regr 2 vs cold 1
+    
+    res=lfcShrink(dds.f, contrast=list(trt_d4, ref), type="ashr")
+    
+    # Check
+    summary(res)
+    
+    # Save object to .GlobalEnv
+    assign(res_d4, res, envir = .GlobalEnv)
+  }
+}
+```
+### Extracting significant results
+
+### Subset data to upregulated and downregulated genes
+
+```{r pl min}
+original_names <- grep("^[as].*t[1-3]$", ls(), value = TRUE)
+
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)
+
+    pl_res_name <- paste0(name, "_sam_pl")
+    min_res_name <- paste0(name, "_sam_min")
+    
+    sig_name = paste0(name, "_sam_sig")
+    
+    res <- obj[which(obj$padj < 0.05), ]
+    assign(sig_name, res, envir = .GlobalEnv)
+    
+    # plus
+    res <- obj[which(obj$padj < 0.05 & obj$log2FoldChange > 0), ]
+    assign(pl_res_name, res, envir = .GlobalEnv)
+
+    # minus
+    res <- obj[which(obj$padj < 0.05 & obj$log2FoldChange < 0), ]
+    assign(min_res_name, res, envir = .GlobalEnv)
+
+  })
+)
+```
+
+### Save results to object for GO analysis
+
+```{r save results}
+# select pattern
+to_save <- ls(pattern = "sam_(pl|min)$")
+# check
+to_save
+
+# saving
+save(list = to_save, file="../rdata-saved/sigs_SAM1.RDa")
+
+# # also save unsplitted results
+# to_save = ls(pattern = "t[1-3]$")
+# 
+# to_save
+# 
+# # saving
+# save(list = to_save, file="../rdata-saved/sigs-plmin.RDa")
+
+# select pattern
+to_save <- ls(pattern = "_sig$")
+# check
+to_save
+
+# saving
+save(list = to_save, file="../rdata-saved/sigs_all_SAM1.RDa")
+```
+
+Following code can be customized to select genes with desired fold change for clustering.
+
+```{r FC0.5}
+# list of gene with minimal FC of 0.5 in either direction
+# to use in Mfuzz clustering
+
+load("../rdata-saved/sigs_all_SAM1.RDa")
+original_names <- grep("^[as].*sig$", ls(), value = TRUE)
+
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)
+
+    sig_name = paste0(name, "_fc05")
+    
+    res <- obj[which(obj$padj < 0.05 & abs(obj$log2FoldChange) > 0.5), ]
+    assign(sig_name, res, envir = .GlobalEnv)
+  })
+)
+
+# select pattern
+to_save <- ls(pattern = "_sam_sig_fc05$")
+# check
+to_save
+
+# saving
+save(list = to_save, file="../rdata-saved/sigs_fc05.RDa")
+```
+
+## References

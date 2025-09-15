@@ -1,0 +1,186 @@
+---
+title: "Comparison of regrowth time-points to the last day of cold in leaf"
+format: html
+date: "2025-07-09"
+bibliography: refs-stat-anal.bib
+execute:
+  eval: false
+  fig-format: png
+  fig.dpi: 300
+---
+
+:::{.callout-note}
+For html creation purposes I've turned off code execution.
+:::
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-two/leaf/scripts")
+```
+
+Built with R version `r getRversion()`
+
+## Rationale
+
+Using only subset of data for leaf and design matrix to extract interesting comparisons.
+
+We have four days, two of which are cold (c1, c2) and two of which are warm (r1, r2 "regrowth") with one-day break (b).
+
+c1 - c2 - b - r1 - r2
+
+:::{.callout-note}
+Here two regrowth points are compared to teh second (last) day of cold.
+For *historical* reasons the following names will be used
+
+d1 - d2 - b - d3 - d4
+:::
+
+In each day we have three samples: dawn, day, and dusk.
+
+c1[dawn, day, dusk] - c2[dawn, day, dusk] - b - r1[dawn, day, dusk] - r2[dawn, day, dusk]
+
+And here we want to compare:
+
+r1[dawn, day, dusk] *vs* c2[dawn, day, dusk]
+r2[dawn, day, dusk] *vs* c2[dawn, day, dusk]
+
+So in all there are 9 time points and we have 6 comparisons.
+
+There are four inbred lines so the same analysis must be done for each.
+
+`DESeq2` package will be used [@loveModeratedEstimationFold2014].
+The analysis is based on [RNA-seq workflow at the gene level](https://bioconductor.org/packages/release/workflows/vignettes/rnaseqGene/inst/doc/rnaseqGene.html) and [Analyzing RNA-seq data with DESeq2](https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#differential-expression-analysis)
+
+Environment cleaning and set-up
+```{r}
+#| eval: false
+#| output: false
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+# Clean working directory
+rm(list=ls())
+```
+
+:::{.callout-note}
+This analysis builds on the previous compuattions described in [02-leaf-only-loop-regr-cold.qmd](02-leaf-only-loop-regr-cold.qmd)
+:::
+
+```{r load data}
+library(DESeq2)
+
+# load workspace
+load("../../../vs-day-one/leaf/rdata-saved/deseq_cold_leaf.RDa")
+```
+
+### Selecting interesting comparisons
+
+For logFC shrinkage `ashr` is used [@stephensFalseDiscoveryRates2016] instead of `apeglm` as the latter doesn't support contrasts.
+
+```{r contrasts}
+#| eval: false
+# using log fold change shrinkage (substitutes results function)
+
+# vector of lines and times
+
+lines = c("a554", "s018", "s84", "s311")
+
+times = c("t1", "t2", "t3")
+
+for (line in lines){
+  for (time in times){
+  
+    # Names from resultsNames
+    ## two days of regrowth
+    trt_d3 <- paste0("group", line, "_d3_", time)
+    trt_d4 <- paste0("group", line, "_d4_", time)
+    
+    # second day of cold is set as reference
+    ref <- paste0("group", line, "_d2_", time)
+    
+    # Names for result objects
+    
+    res_d3 <- paste0(line, "_d3d2_", time)
+    res_d4 <- paste0(line, "_d4d2_", time)
+    
+    ## regr 1 vs cold 2
+    
+    res=lfcShrink(dds.f, contrast=list(trt_d3, ref), type="ashr")
+    
+    # Check
+    summary(res)
+    
+    # Save object to .GlobalEnv
+    assign(res_d3, res, envir = .GlobalEnv)
+    
+    ## regr 2 vs cold 2
+    
+    res=lfcShrink(dds.f, contrast=list(trt_d4, ref), type="ashr")
+    
+    # Check
+    summary(res)
+    
+    # Save object to .GlobalEnv
+    assign(res_d4, res, envir = .GlobalEnv)
+  }
+}
+```
+### Extracting significant results
+
+### Subset data to upregulated and downregulated genes
+
+```{r pl min}
+original_names <- grep("^[as].*t[1-3]$", ls(), value = TRUE)
+
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)
+
+    pl_res_name <- paste0(name, "_pl")
+    min_res_name <- paste0(name, "_min")
+    
+    sig_name = paste0(name, "_sig")
+    
+    res <- obj[which(obj$padj < 0.05), ]
+    assign(sig_name, res, envir = .GlobalEnv)
+    
+    # plus
+    res <- obj[which(obj$padj < 0.05 & obj$log2FoldChange > 0), ]
+    assign(pl_res_name, res, envir = .GlobalEnv)
+
+    # minus
+    res <- obj[which(obj$padj < 0.05 & obj$log2FoldChange < 0), ]
+    assign(min_res_name, res, envir = .GlobalEnv)
+
+  })
+)
+```
+
+### Save results to object for GO analysis
+
+```{r save results}
+# select pattern
+to_save <- ls(pattern = "(pl|min)$")
+# check
+to_save
+
+# saving
+save(list = to_save, file="../rdata-saved/sigs-leaf2.RDa")
+
+# # also save unsplitted results
+# to_save = ls(pattern = "t[1-3]$")
+# 
+# to_save
+# 
+# # saving
+# save(list = to_save, file="../rdata-saved/sigs-plmin.RDa")
+
+# select pattern
+to_save <- ls(pattern = "_sig$")
+# check
+to_save
+
+# saving
+save(list = to_save, file="../rdata-saved/sigs-leaf2_all.RDa")
+```
+
+## References

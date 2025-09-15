@@ -1,0 +1,502 @@
+---
+title: "Mfuzz clustering of SAM data, comparison to day two"
+format: html
+date: "2025-09-07"
+bibliography: refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+
+Comparisons to day one (penultimate day of cold)
+
+
+/media/mj/ANTIX-LIVE/2024_04_01.counts.PS
+/media/mj/ANTIX-LIVE/expr-anal2powt
+
+http://mfuzz.sysbiolab.eu/
+https://support.bioconductor.org/p/9156659/ # uśrednianie reps i użycie vst
+https://support.bioconductor.org/p/111294/ # info o cpm od developerów
+https://support.bioconductor.org/p/9156710/ # garść info od Love
+
+
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/sam/scripts")
+```
+
+```{r packages}
+#| eval: false
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("Mfuzz")
+BiocManager::install("marray")
+BiocManager::install("limma")
+```
+
+```{r}
+#| output: false
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+# Clean working directory
+rm(list=ls())
+```
+
+## Create ExpressionSet from DESeq2 results
+
+### Load significant genes
+
+```{r load}
+load("../rdata-saved/sigs_all_SAM2.RDa")
+```
+
+### Extract significant genes' IDs
+
+```{r sigs}
+
+original_names <- grep("^[sa]", ls(), value = TRUE)
+
+invisible(
+  lapply(original_names, function(name) {
+  obj <- get(name)
+  
+  result = rownames(obj)
+  
+  new_name <- paste0("v.", name)
+  assign(new_name, result, envir = .GlobalEnv)  # save new object
+    }
+  )
+)
+
+rm(list=ls(pattern = "^[sa]")) # remove original objects
+rm(original_names)
+```
+
+### Join vectors and remove duplicates
+
+```{r join}
+
+vectors <- mget(ls(pattern = "^v.*"))
+
+# połącz wszystkie w jeden i usuń duplikaty
+joined_ids <- unique(unlist(vectors))
+
+rm(list=ls(pattern = "^v.*")) # remove intermediate objects
+
+```
+
+### Load counts and normalize them using VST
+
+```{r read data, cache=TRUE}
+load("../../../input-data/rdata/counts_and_metadata.RDa")
+
+# previously prepared range data
+library("GenomicRanges")
+load("../../../input-data/rdata/ranges.RDa")
+
+# make variable for averaging
+coldata$forAverage <- factor(paste0(coldata$line, ".", coldata$day, coldata$time))
+
+# Check if files are in concert
+all(rownames(coldata) %in% colnames(cts))
+all(rownames(coldata) == colnames(cts))
+```
+
+### Change samples' order
+
+```{r sort}
+# sort colData
+coldata.srt <- coldata[order(rownames(coldata)), ]
+
+# sort counts columns
+cts.srt <- cts[, rownames(coldata.srt)]
+
+# Check if files are in concert
+all(rownames(coldata.srt) %in% colnames(cts.srt))
+all(rownames(coldata.srt) == colnames(cts.srt))
+
+# remove original objects
+rm(list=c("cts", "coldata"))
+```
+
+### Subset SAM data
+
+Subsetting is done at the level of raw data (counts and coldata).
+```{r subset SAM data}
+# subset coldata to contain only sam data
+coldata.sam=subset(coldata.srt, tissue=="sam")
+
+# check
+dim(coldata.sam)
+
+# vector of sample names to keep - needed to select columns from count file
+keep.sam=rownames(coldata.sam)
+
+# check - only samples named "s..." should remain
+keep.sam
+length(keep.sam)
+
+# subsetting counts
+cts.sam=subset(cts.srt, select=keep.sam)
+
+# check
+dim(cts.sam)
+colnames(cts.sam)
+
+# Check if counts and coldata are in concert
+all(rownames(coldata.sam) %in% colnames(cts.sam))
+all(rownames(coldata.sam) == colnames(cts.sam))
+```
+
+### Create DESeq2 object
+
+```{r dds, cache=TRUE}
+#| output: false
+#| message: false
+library("DESeq2")
+# create dataset, design included only for command completeness
+dds = DESeqDataSetFromMatrix(countData=cts.sam, colData=coldata.sam, rowRanges=gzakresy, design= ~ line+time)
+
+# check for missing values
+any(is.na(counts(dds)))
+
+# check
+table(colData(dds)$tissue)
+```
+
+### Pre-filtering
+
+```{r pre-filtering, cache=TRUE}
+# at least 3 samples with a count of 10 or higher
+keep <- rowSums(counts(dds) >= 10) >= 3
+dds.f <- dds[keep,]
+
+# check
+dim(dds.f)
+
+# what percent of genes remained?
+100*(dim(dds.f)[1]/dim(dds)[1])
+```
+
+```{r normalize, cache=TRUE}
+vsd = varianceStabilizingTransformation(dds.f, blind=TRUE)
+```
+
+```{r cleanup}
+# objects to keep
+keep <- c("vsd", "joined_ids")
+
+# remove everything else
+rm(list = setdiff(ls(), keep))
+```
+
+### Select counts for sigs
+
+```{r counts}
+# select sigs
+vsd.sigs = vsd[rownames(vsd) %in% joined_ids, ]
+
+# varMetadata - opis czytelny zmiennych
+metadata=data.frame(labelDescription=c("pooled sample", "letter", "tissue", "line", "hour of pooling", "sample number", "day", "replication", "condition", "id", "reads [million]", "batch [sequencing]", "million of reads binned", "grouping variable for averaging", "sizeFactor"), row.names=colnames(colData(vsd.sigs)))
+
+# metadata
+phenoData=new("AnnotatedDataFrame", data=as.data.frame(colData(vsd.sigs)), varMetadata=metadata)
+phenoData
+
+## check
+# sampleNames(phenoData)
+# pData(phenoData)
+# varMetadata(phenoData)
+# head(pData(phenoData))
+
+# make ExpressionSet
+vsd.eset <- ExpressionSet(assayData=assay(vsd.sigs), phenoData=phenoData)
+```
+
+### Averaging and standardizing
+
+```{r avg and std}
+library(limma)
+
+# average reps
+average = t(avereps(t(exprs(vsd.eset)), ID = vsd.eset$forAverage)) # output is a matrix
+
+# check
+dim(average)
+dim(vsd.eset)
+
+## make new phenoData
+phenoDataAve = phenoData[!duplicated(vsd.eset$forAverage), ]
+rownames(phenoDataAve)= phenoDataAve$forAverage
+
+library(dplyr)
+
+pdata_sorted <- pData(phenoDataAve) %>%
+  arrange(line, day, time)
+
+# i potem, jeśli chcesz przywrócić AnnotatedDataFrame:
+pData(phenoDataAve) <- pdata_sorted
+
+# sort counts columns
+average.srt <- average[, rownames(pData(phenoDataAve))]
+
+all(rownames(pData(phenoDataAve) ) %in% colnames(average.srt))
+all(rownames(pData(phenoDataAve) ) == colnames(average.srt))
+
+vsd.eset.ave=ExpressionSet(assayData=average.srt, phenoData=phenoDataAve)
+
+##
+
+# standardise
+library(Mfuzz)
+vsd.eset.std=standardise(vsd.eset.ave)
+
+# check
+head(exprs(vsd.eset.std))
+
+```
+
+```{r cleanup2}
+# objects to keep
+keep <- c("vsd.eset.std")
+
+# remove everything else
+rm(list = setdiff(ls(), keep))
+
+save(vsd.eset.std, file="../rdata-saved/vsd.eset.std.sam.RDa")
+```
+
+## Clustering
+
+### Estimate fuzzification parameters
+
+```{r estimate m}
+# fuzzification parameter
+m1 <- mestimate(vsd.eset.std)
+
+m1
+```
+
+```{r estimate c}
+# # using estimated m
+# 
+# cl1=mfuzz(vsd.eset.std, c=16, m=m1)
+# 
+# pdf("cl16_104R.pdf")
+# #mfuzz.plot2(vsd.eset.std, cl=cl1, x11 = FALSE, single = 1, time.labels = colnames(vsd.eset.std), cex.axis = 0.6, las = 2)
+# #mfuzz.plot2(vsd.eset.std, cl=cl1, x11 = FALSE, single = 1, time.labels = colnames(vsd.eset.std))
+# mfuzz.plot2(vsd.eset.std, cl=cl1, mfrow=c(4,4), x11 = FALSE)
+# dev.off()
+```
+
+```{r parameters}
+## Deciding on cluster parameters ##
+# m is already estimated
+## TAKEN FROM partcoeff DESCRIPTION IN MANUAL
+vsd.random=randomise(vsd.eset.std)
+
+library("BiocParallel")
+register(MulticoreParam(8))
+#tmpR=partcoef(vsd.random, crange=seq(8, 16, 1),mrange=seq(1.05, 2, 0.05))
+tmpR=partcoef(vsd.random, crange=seq(16, 40, 1), mrange=seq(1.05, 2, 0.05))
+F <- tmpR[[1]];F.n <- tmpR[[2]];F.min <- tmpR[[3]]
+F > 1.01 * F.min
+
+# it seems that value given by mestimate is too low and minimum 1.15 should be used
+
+library(Mfuzz)
+# draw and save legend (uses modified function as this from package not work)
+source("../../../colorbar.R")
+pdf("colorbar.pdf", width=2, height=7)
+colorBar()
+dev.off()
+```
+```{r check random}
+# RANODM
+
+#######################
+# Zmień mfrow RECZNIE #
+#######################
+
+# c_val <- 4 ; m_val <- 1.05 # Non uniform partition (too low m value)
+# c_val <- 8 ; m_val <- 1.05 # Non uniform partition (too low m value)
+# c_val <- 4 ; m_val <- 1.15 # produces uniform partitioning 
+c_val <- 8 ; m_val <- 1.15
+
+
+# analiza MFuzz z użyciem zmiennych
+cl <- mfuzz(vsd.random, c = c_val, m = m_val)
+
+# tworzymy nazwę pliku dynamicznie
+filename <- paste0("cl", c_val, "_", m_val, "R.pdf")
+
+pdf(filename)
+mfuzz.plot2(vsd.random, cl = cl, mfrow = c(4, 2), x11 = FALSE)
+dev.off()
+
+```
+
+
+```{r auto c}
+library("BiocParallel")
+register(MulticoreParam(8))
+
+tmp = cselection(vsd.eset.std, m = 1.30 ,crange=seq(10,40,1), repeats=5, visu=TRUE)
+```
+
+```{r check real}
+#REAL
+
+#######################
+# Zmień mfrow RECZNIE #
+#######################
+
+library(Mfuzz)
+
+# parametry do testowania
+#c_vals <- c(10:16)          # liczby klastrów
+#c_vals <- c(16:30)
+c_vals <- c(30:50)
+m_vals <- c(1.10, 1.15, 1.20)  # wartości m
+
+# lista wyników
+results <- list()
+
+# pętla po wszystkich kombinacjach c i m
+for (c_val in c_vals) {
+  for (m_val in m_vals) {
+    
+    # clustering
+    cl <- mfuzz(vsd.eset.std, c = c_val, m = m_val)
+    
+    # zapisz do listy wyników
+    key <- paste0("c", c_val, "_m", m_val)
+    results[[key]] <- cl
+    
+    # dynamiczna nazwa pliku
+    filename <- paste0("cl", c_val, "_", m_val, ".pdf")
+    
+    # zapis wykresu
+    pdf(filename)
+    mfuzz.plot2(vsd.eset.std, cl = cl, mfrow = c(4, 4), x11 = FALSE, centre=TRUE, centre.col="black",centre.lwd=2)
+    dev.off()
+  }
+}
+
+```
+
+```{r overlaps}
+# Załóżmy, że masz listę wyników klastrów z pętli:
+# results[["c14_m1.20"]] <- cl14_120
+
+# lista do przechowywania wyników overlap
+overlaps <- list()
+
+for (key in names(results)) {
+  
+  cl <- results[[key]]
+  
+  # oblicz overlap
+  ov <- overlap(cl)
+  overlaps[[key]] <- ov
+  
+  # nazwa pliku PDF np. "c14_m1.20_overlap.pdf"
+  filename <- paste0(key, "_overlap.pdf")
+  
+  pdf(filename)
+  overlap.plot(cl, over = ov, thres = 0.05)
+  dev.off()
+  
+  message("Zapisano: ", filename)
+}
+```
+
+```{r}
+# 16
+cl16_115=mfuzz(vsd.eset.std, c=16, m=1.15)
+pdf("cl16_115.pdf")
+mfuzz.plot2(vsd.eset.std, cl=cl16_115, mfrow=c(4,4), x11 = FALSE)
+dev.off()
+
+# overlap
+overlap16_115=overlap(cl16_115)
+pdf("cl16_115over.pdf")
+overlap.plot(cl16_115, over=overlap16_115 ,thres=0.05)
+dev.off()
+
+# 15
+
+cl15_115=mfuzz(vsd.eset.std, c=15, m=1.15)
+pdf("cl15_115.pdf")
+mfuzz.plot2(vsd.eset.std, cl=cl15_115, mfrow=c(4,4), x11 = FALSE)
+dev.off()
+
+# overlap
+overlap15_115=overlap(cl15_115)
+pdf("cl15_115over.pdf")
+overlap.plot(cl15_115, over=overlap15_115 ,thres=0.05)
+dev.off()
+
+## 14 ##
+
+cl14_115=mfuzz(vsd.eset.std, c=14, m=1.15)
+pdf("cl14_115.pdf")
+mfuzz.plot2(vsd.eset.std, cl=cl14_115, mfrow=c(4,4), x11 = FALSE)
+dev.off()
+
+# overlap
+overlap14_115=overlap(cl14_115)
+pdf("cl14_115over.pdf")
+overlap.plot(cl14_115, over=overlap14_115 ,thres=0.05)
+dev.off()
+
+# stability - increasing m
+
+cl14_120=mfuzz(vsd.eset.std, c=14, m=1.20)
+pdf("cl14_120.pdf")
+mfuzz.plot2(vsd.eset.std, cl=cl14_120, mfrow=c(4,4), x11 = FALSE)
+dev.off()
+
+# overlap
+overlap14_120=overlap(cl14_120)
+pdf("cl14_120over.pdf")
+overlap.plot(cl14_120, over=overlap14_120 ,thres=0.05)
+dev.off()
+
+##    ##
+
+# 13
+
+cl13_115=mfuzz(vsd.eset.std, c=13, m=1.15)
+pdf("cl13_115.pdf")
+mfuzz.plot2(vsd.eset.std, cl=cl13_115, mfrow=c(4,4), x11 = FALSE)
+dev.off()
+
+# overlap
+overlap13_115=overlap(cl13_115)
+pdf("cl13_115over.pdf")
+overlap.plot(cl13_115, over=overlap13_115 ,thres=0.05)
+dev.off()
+
+# 12
+
+cl12_115=mfuzz(vsd.eset.std, c=12, m=1.15)
+pdf("cl12_115.pdf")
+mfuzz.plot2(vsd.eset.std, cl=cl12_115, mfrow=c(4,3), x11 = FALSE)
+dev.off()
+
+# overlap
+overlap12_115=overlap(cl12_115)
+pdf("cl12_115over.pdf")
+overlap.plot(cl12_115, over=overlap12_115 ,thres=0.05)
+dev.off()
+```

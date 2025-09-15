@@ -1,0 +1,358 @@
+---
+title: "GO analysis for expression changes in leaf in cold (expression change p-val<0.01)"
+format: html
+date: "2025-07-14"
+bibliography: refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+:::{.callout-note}
+For html creation purposes I've turned off code execution.
+:::
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+```{r}
+#| eval: false
+#| output: false
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+# Clean working directory
+rm(list=ls())
+```
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/media/mj/ANTIX-LIVE/project1-stat/vs-day-one-expr001/leaf/scripts")
+```
+
+
+## Load and filter files
+
+Necessary test has been done before in [02-leaf-only-loop-regr-cold.qmd](../../../vs-day-one/leaf/scripts/02-leaf-only-loop-regr-cold.qmd), here only filtering is required.
+
+```{r load}
+# files filtered at 0.05 level
+load("../../../vs-day-one/leaf/rdata-saved/sigs-leaf1.RDa")
+```
+
+```{r filter}
+library(DESeq2)
+
+original_names <- grep("^[as].*[nl]$", ls(), value = TRUE)
+
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)
+
+    res_name <- paste0(name, "001")
+
+    # plus
+    res <- obj[which(obj$padj < 0.01), ]
+    assign(res_name, res, envir = .GlobalEnv)
+
+  })
+)
+
+rm(list=ls(pattern = "^[as].*[nl]$")) # remove original objects
+save(list = ls(pattern = "^[as].*1$"), file = "../rdata-saved/sigs-leaf1-001.RDa")
+```
+
+
+## Files for GO analysis
+
+:::{.callout-note}
+This `bash` chunk has been done already and don't need to be repeated.
+:::
+
+The gene annotation data are taken from @wimalanathanMaizeGOAnnotation2018
+
+:::{.callout-warning}
+**Do not** use `gtf` files containing `chr`. They contain less genes! Original counts has been made with such file but it has exactly the same features and associated numbers as `gff` file used in this tutorial.
+:::
+
+```{bash GO data}
+#| eval: false
+#| message: false
+
+# GO categories
+## The source data is file from Wimalanathan et. al (2018)
+cut -f3,5 ../../../input-data/go/3.1_B73v5.MaizeGDB.CLEANED.gaf | tail -n +2 > ../../../input-data/go/go.cats
+
+# genes and their lengths
+## Computation of median transcript length per gene, as goseq documentation states
+## using featureCounts and counting at trancript level using test bam file
+### Here v5.0.57 not v5.0.55 is used but they are the same
+~/bin/subread-2.0.6-Linux-x86_64/bin/featureCounts -C -B -Q 10 -F GTF -s 2 -T 8 \
+--ignoreDup -p --countReadPairs -t exon -g transcript_id \
+-a /mnt/usb-Seagate_Backup+_Desk_NA7DYET1-0:0-part2/genome/Zea_mays.Zm-B73-REFERENCE-NAM-5.0.57.gtf \
+-o ../../../input-data/go/counts-fake-tran.txt  /home/mj/cw-samtools/19_p1_5Msample.bam
+
+## Extracting gene names and lengths from the counts file - transcript names are flattened to gene names
+cut -f1,6 ../../../input-data/go/counts-fake-tran.txt | tail -n +3 | tr '_' '\t' | cut -f1,3 | sort -k1,1 > ../../../input-data/go/tran2gene2length
+
+## Further processing is done in R
+```
+
+Computation of median transcript length
+
+```{r median length}
+#| message: false
+
+df <- read.table("../../../input-data/go/tran2gene2length", header = FALSE, col.names = c("ID", "Value"))
+
+library(dplyr)
+
+medians <- df |>
+  group_by(ID) |>
+    summarise(med = round(median(Value)))
+
+# create list of genes and list of lengths
+assayed.genes <- medians[[1]]
+
+length.vec <- setNames(medians[[2]], medians[[1]])
+length.vec <- setNames(as.integer(length.vec), names(length.vec))
+
+# read GO categories
+
+go.cats=read.table("../../../input-data/go/go.cats", header = TRUE, stringsAsFactors = FALSE)
+
+# clean up
+rm(df, medians)
+
+```
+
+Files for GO analysis
+| object | description |
+| --- | --- |
+| `assayed.genes` | all known maize genes (from `gff`) |
+| `length.vec` | median length of each gene in `assayed.genes` |
+| `go.cats` | GO categories for each gene in `assayed.genes` |
+
+:::{.callout-note}
+These files are valid for a given genome annotation (genes in `gff` file) and GO annotation.
+:::
+
+## GO analysis
+
+Using `goseq` package [@youngGeneOntologyAnalysis2010]
+
+### Create a vector of significant genes
+
+Get gene names
+
+```{r de list lapply}
+#| echo: false
+#| message: false
+# list of names
+original_names <- grep("^[as].*1$", ls(), value = TRUE)
+
+prefix <- "de."
+
+# get gene names
+## invisible is used to suppress output in terminal
+
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)                 # get object by name
+    result=rownames(obj)           # get gene names
+    new_name <- paste0(prefix, name) # create new name with prefix
+    assign(new_name, result, envir = .GlobalEnv)  # save new object
+  })
+)
+
+rm(original_names, prefix) # clean up
+
+rm(list=ls(pattern = "^[as].*1$")) # remove original objects
+
+```
+
+Create vector
+
+```{r create vector lapply}
+# list of names
+original_names <- grep("^d.*1$", ls(), value = TRUE)
+
+prefix <- "gv."
+
+# create vectors
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)                 # get object by name
+    result=as.integer(assayed.genes %in% obj)           # create vector
+    names(result) <- assayed.genes  # set names to gene IDs
+    new_name <- paste0(prefix, name) # create new name with prefix
+    assign(new_name, result, envir = .GlobalEnv)  # save new object
+  })
+)
+
+rm(original_names, prefix) # clean up
+
+rm(list=ls(pattern = "^d.*1$")) # remove intermediate objects
+```
+
+### Fitting the Probability Weighting Function (PWF)
+
+```{r check data lapply}
+print(length(length.vec))
+print(anyDuplicated(names(length.vec)))
+
+original_names <- grep("^gv.*1$", ls(), value = TRUE)
+
+invisible(
+lapply(original_names, function(name) {
+  obj <- get(name)                 # get object by name
+  cat("Przetwarzam obiekt:", name, "\n")
+  print(length(obj))
+  print(anyDuplicated(names(obj)))
+  print(all(names(obj) %in% names(length.vec)))
+  print(all(names(length.vec) %in% names(obj)))
+})
+)
+
+rm(original_names) # clean up
+```
+
+```{r pwf lapply}
+#| echo: false
+#| message: false
+library(goseq)
+# list of names
+original_names <- grep("^gv.*1$", ls(), value = TRUE)
+
+prefix <- "pwf."
+
+# create vectors
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)                 # get object by name
+    result=nullp(obj, bias.data=length.vec, plot.fit=FALSE)           # create vector
+    new_name <- paste0(prefix, name) # create new name with prefix
+    assign(new_name, result, envir = .GlobalEnv)  # save new object
+  })
+)
+
+rm(original_names, prefix) # clean up
+
+rm(list=ls(pattern = "^gv.*1$")) # remove intermediate objects
+
+```
+
+```{r plots lapply}
+#| warning: false
+original_names <- grep("^pwf.*1$", ls(), value = TRUE)
+
+invisible(
+plots <- lapply(original_names, function(name) {
+  obj <- get(name)
+  plotPWF(obj, main=name)
+})
+)
+
+rm(original_names) # clean up
+```
+
+### Test
+
+```{r goseq lapply}
+#| message: false
+#| output: false
+
+# list of names
+original_names <- grep("^pwf.*1$", ls(), value = TRUE)
+
+prefix1 <- "gs."
+prefix2 <- "bh.gs."
+
+# create vectors
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)                 # get object by name
+    result1=goseq(obj, gene2cat=go.cats, method="Wallenius", use_genes_without_cat=FALSE)
+    result2=result1$category[p.adjust(result1$over_represented_pvalue, method="BH")<.05]
+    new_name1 <- paste0(prefix1, name) # create new name (goseq result) with prefix
+    new_name2 <- paste0(prefix2, name) # create new name (bh correction result) with prefix
+    assign(new_name1, result1, envir = .GlobalEnv)  # save gs
+    assign(new_name2, result2, envir = .GlobalEnv)  # save bh
+  })
+)
+
+rm(original_names, prefix1, prefix2) # clean up
+
+rm(list=ls(pattern = "^pwf.*1$")) # remove intermediate objects
+
+```
+
+## Save objects
+
+:::{.callout-note}
+For use in EnrichmentMap App for Cytoscape
+:::
+
+```{r save objects}
+# Saving results of goseq without BH correction (gs...) as objects after correction (bh...) contain only GO IDs with adjusted p-value below threshold
+save(list = ls(pattern = "^gs."), file = "../rdata-saved/goseq-res-leaf1-001.RDa")
+save(list = ls(pattern = "^bh."), file = "../rdata-saved/goseq-bh-res-leaf1-001.RDa")
+
+```
+
+Bar chart
+```{r bar chart, fig.width=18, fig.height=6, dpi=300, dev='png'}
+#| layout-nrow: 4
+vector_names <- grep("^bh", ls(), value = TRUE)  # lub inny wspólny prefix
+
+library(dplyr)
+library(purrr)
+library(tibble)
+
+# vector_names contains names of vector objects
+result_df <- map_dfr(vector_names, function(name) {
+  vec <- get(name)
+  
+  tibble(
+    zbior = name,
+    wartość = length(vec)  # convert to text
+  )
+})
+
+library(tidyr)
+
+result_df_clean <- result_df |>
+  mutate(core_name = zbior,
+  line = sub("^.*\\.(\\w+)_d.*$", "\\1", zbior)) |>
+    separate(core_name, into = c("id", "day", "time", "condition"), sep = "_")
+
+library(ggplot2)
+
+ggplot(result_df_clean, aes(x = zbior, y = wartość, fill = line)) +
+  geom_col() +
+  labs(title = "Number of overrepresented categories, color by line", x = "set", y = "count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(result_df_clean, aes(x = zbior, y = wartość, fill = day)) +
+  geom_col() +
+  labs(title = "Number of overrepresented categories, color by day", x = "set", y = "count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(result_df_clean, aes(x = zbior, y = wartość, fill = time)) +
+  geom_col() +
+  labs(title = "Number of overrepresented categories, color by time of day", x = "set", y = "count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(result_df_clean, aes(x = zbior, y = wartość, fill = condition)) +
+  geom_col() +
+  labs(title = "Number of overrepresented categories, color by temperature", x = "set", y = "count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+## References

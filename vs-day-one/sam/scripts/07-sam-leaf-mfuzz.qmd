@@ -1,0 +1,230 @@
+---
+title: "Mfuzz clustering of SAM and leaf data"
+format: html
+date: "2025-08-27"
+bibliography: refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+
+Comparisons to day one (penultimate day of cold)
+
+
+/media/mj/ANTIX-LIVE/2024_04_01.counts.PS
+/media/mj/ANTIX-LIVE/expr-anal2powt
+
+http://mfuzz.sysbiolab.eu/
+https://support.bioconductor.org/p/9156659/ # uśrednianie reps i użycie vst
+https://support.bioconductor.org/p/111294/ # info o cpm od developerów
+https://support.bioconductor.org/p/9156710/ # garść info od Love
+
+
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/sam/scripts")
+```
+
+```{r packages}
+#| eval: false
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("Mfuzz")
+```
+
+```{r}
+#| output: false
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+# Clean working directory
+rm(list=ls())
+```
+
+## Create ExpressionSet from DESeq2 results
+
+### Load significant genes
+
+```{r load}
+load("../rdata-saved/sigs_all_SAM1.RDa")
+load("../../leaf/rdata-saved/sigs-leaf1_all.RDa")
+```
+
+### Extract significant genes' IDs
+
+```{r sigs}
+
+original_names <- grep("^[sa]", ls(), value = TRUE)
+
+invisible(
+  lapply(original_names, function(name) {
+  obj <- get(name)
+  
+  result = rownames(obj)
+  
+  new_name <- paste0("v.", name)
+  assign(new_name, result, envir = .GlobalEnv)  # save new object
+    }
+  )
+)
+
+rm(list=ls(pattern = "^[sa]")) # remove original objects
+rm(original_names)
+```
+
+### Join vectors and remove duplicates
+
+```{r join}
+
+vectors <- mget(ls(pattern = "^v.*"))
+
+# połącz wszystkie w jeden i usuń duplikaty
+joined_ids <- unique(unlist(vectors))
+
+rm(list=ls(pattern = "^v.*")) # remove intermediate objects
+
+```
+
+### Load counts and normalize them using VST
+
+```{r read data, cache=TRUE}
+load("../../../input-data/rdata/counts_and_metadata.RDa")
+
+# previously prepared range data
+library("GenomicRanges")
+load("../../../input-data/rdata/ranges.RDa")
+
+# make variable for averaging
+coldata$forAverage <- factor(paste0(coldata$tissue, ".", coldata$line, ".", coldata$day, coldata$time))
+
+# Check if files are in concert
+all(rownames(coldata) %in% colnames(cts))
+all(rownames(coldata) == colnames(cts))
+```
+
+### Create DESeq2 object for both tissues (full dataset)
+
+```{r dds, cache=TRUE}
+#| output: false
+#| message: false
+library("DESeq2")
+# create dataset, design included only for command completeness, different will be used
+dds = DESeqDataSetFromMatrix(countData=cts, colData=coldata, rowRanges=gzakresy, design= ~ tissue+line+time)
+
+# check for missing values
+any(is.na(counts(dds)))
+```
+
+### Pre-filtering
+
+```{r pre-filtering, cache=TRUE}
+# at least 3 samples with a count of 10 or higher
+keep <- rowSums(counts(dds) >= 10) >= 3
+dds.f <- dds[keep,]
+
+# check
+dim(dds.f)
+
+# what percent of genes remained?
+100*(dim(dds.f)[1]/dim(dds)[1])
+```
+
+```{r normalize, cache=TRUE}
+vsd = varianceStabilizingTransformation(dds.f, blind=TRUE)
+```
+
+```{r cleanup}
+# objects to keep
+keep <- c("vsd", "joined_ids")
+
+# remove everything else
+rm(list = setdiff(ls(), keep))
+```
+
+### Select counts for sigs
+
+```{r counts}
+# select sigs
+vsd.sigs = vsd[rownames(vsd) %in% joined_ids, ]
+
+# varMetadata - opis czytelny zmiennych
+metadata=data.frame(labelDescription=c("pooled sample", "letter", "tissue", "line", "hour of pooling", "sample number", "day", "replication", "condition", "id", "reads [million]", "batch [sequencing]", "million of reads binned", "grouping variable for averaging", "sizeFactor"), row.names=colnames(colData(vsd.sigs)))
+
+# metadata
+# phenoData
+phenoData=new("AnnotatedDataFrame", data=as.data.frame(colData(vsd.sigs)), varMetadata=metadata)
+
+# check
+# phenoData
+# sampleNames(phenoData)
+# pData(phenoData)
+# varMetadata(phenoData)
+# head(pData(phenoData))
+
+# make ExpressionSet
+vsd.eset <- ExpressionSet(assayData=assay(vsd.sigs), phenoData=phenoData)
+```
+
+### Averaging and standardizing
+
+```{r avg and std}
+library(limma)
+
+# average reps
+average = t(avereps(t(exprs(vsd.eset)), ID = vsd.eset$forAverage)) # output is a matrix
+
+# check
+dim(average)
+dim(vsd.eset)
+
+# add expression data to eSet
+vsd.eset.ave=ExpressionSet(assayData=average)
+
+# check
+vsd.eset.ave
+all(colnames(vsd.eset)==colnames(vsd.sigs))
+
+# standardise
+library(Mfuzz)
+vsd.eset.std=standardise(vsd.eset.ave)
+
+# check
+head(exprs(vsd.eset.std))
+
+```
+
+```{r cleanup2}
+# objects to keep
+keep <- c("vsd.eset.std")
+
+# remove everything else
+rm(list = setdiff(ls(), keep))
+```
+
+## Clustering
+
+### Estimate fuzzification parameters
+
+```{r estimate m}
+# fuzzification parameter
+m1 <- mestimate(vsd.eset.std)
+
+m1
+```
+
+```{r estimate c}
+cl1=mfuzz(vsd.eset.std, c=16, m=m1)
+
+pdf("mfuzz.plot2.pdf")
+mfuzz.plot2(vsd.eset.std, cl=cl1, x11 = FALSE, single = 1, time.labels = colnames(vsd.eset.std))
+dev.off()
+```
+

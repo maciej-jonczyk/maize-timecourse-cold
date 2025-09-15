@@ -1,0 +1,110 @@
+---
+title: "Draw tree for significant GOs (Biolgical Process class), SAM (expression change p-val<0.01)"
+format: html
+date: "2025-07-15"
+bibliography: refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/media/mj/ANTIX-LIVE/project1-stat/vs-day-two-expr001/sam/script")
+```
+
+Built with R version `r getRversion()`
+
+# Data preparation
+
+## Environment cleaning and set-up
+
+```{r}
+#| output: false
+#| message: false
+# Set working directory
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+
+rm(list=ls())
+```
+
+## Load the data
+
+```{r load data}
+load("../rdata-saved/goseq-bh-res_SAM2-001.RDa")
+```
+
+Remove empty vectors
+```{r remove empty}
+# Identify objects of length 0
+empty_vars <- ls()[sapply(ls(), function(x) length(get(x)) == 0)]
+
+# remove them
+rm(list = empty_vars)
+```
+
+```{bash mkdir}
+rm -r ../results/go/graphs/all-cats/
+
+mkdir -p ../results/go/graphs/all-cats/
+```
+
+```{r export}
+# export vectors with significant GOs to files
+original_names <- grep("^bh.*(min|pl)001$", ls(), value = TRUE)
+
+invisible(
+lapply(original_names, function(name) {
+  obj <- get(name)
+  write.table(obj, file = paste0("../results/go/graphs/all-cats/", sub("^.*\\.(\\w+)*$", "\\1", name)), row.names = FALSE, col.names=FALSE, quote = FALSE)
+})
+)
+```
+
+```{bash BP only}
+
+rm -r ../results/go/graphs/bp_only/
+
+mkdir ../results/go/graphs/bp_only/
+
+cd ../results/go/graphs/all-cats/
+
+sample_names=($(ls *))
+
+for sample in ${sample_names[@]}
+do
+grep -f ../../../../../../input-data/go/go_terms_bp.txt ${sample} > ../bp_only/${sample}.bp
+done
+```
+
+```{bash rm empty}
+find ../results/go/graphs/bp_only/ -maxdepth 1 -type f -size 0c -delete
+```
+
+Using [goatools](https://github.com/tanghaibao/goatools/blob/main/doc/md/README_go_plot.md#six-different-colored-go-terms-without-relationships)
+
+```{bash draw}
+
+rm -r ../results/go/graphs/png/
+
+mkdir ../results/go/graphs/png/
+
+cd ../results/go/graphs/bp_only/
+
+sample_names=($(ls *))
+
+for sample in ${sample_names[@]}
+do
+go_plot.py --obo=../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../png/${sample}.png
+done
+```
+
+```{bash compress}
+cd ../results/go/graphs
+
+zip -r SAM2-001-png.zip png/
+
+```
+
+## References

@@ -1,0 +1,24 @@
+# deprecated scripts
+scripts-old/
+
+# files not to share
+other-files/
+input-data/
+**/rdata-saved/
+**/results/
+
+# intermediate and easy to recreate files and dirs
+**/*_cache
+**/*_files
+**/*.html
+**/*.pdf
+**/.Rproj.user
+**/.RData
+**/.Rhistory
+**/.RDataTmp
+
+# rubbish
+**/poziomy-filtrzcji
+**/pods_parametrow
+**/xprzyklad
+**/zestawienie\ GO\ na\ plakat_mj.xlsx

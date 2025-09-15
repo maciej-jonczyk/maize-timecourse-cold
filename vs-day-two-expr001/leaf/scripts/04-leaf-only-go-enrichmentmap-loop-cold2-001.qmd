@@ -1,0 +1,564 @@
+---
+title: "Export of GO analysis for visualisation in EnrichmentMap Cytoscape App, comparisons to 2nd day of cold (expression change p-val<0.01)"
+format: html
+date: "2025-07-15"
+bibliography: refs-stat-anal.bib
+execute:
+  eval: false
+  fig-format: png
+  fig.dpi: 300
+---
+
+:::{.callout-note}
+For html creation purposes I've turned off code execution.
+:::
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/media/mj/ANTIX-LIVE/project1-stat/vs-day-two-expr001/leaf/scripts")
+```
+
+```{r}
+#| eval: false
+#| output: false
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+# Clean working directory
+rm(list=ls())
+```
+
+## Read in files
+```{r load data}
+#| echo: false
+#| message: false
+
+# Lists of significant genes (from DESeq2)
+load("../rdata-saved/sigs-leaf2-001.RDa")
+
+# Saving results of goseq without BH correction (gs...) and objects after correction (bh...) contain only adjusted p-value
+load("../rdata-saved/goseq-res-leaf2-001.RDa")
+load("../rdata-saved/goseq-bh-res-leaf2-001.RDa")
+
+# gene - GO mapping
+go.cats=read.table("../../../input-data/go/go.cats", header = TRUE, stringsAsFactors = FALSE)
+```
+
+## Install packages
+
+```{r load packages}
+#| eval: false
+# Bezpieczna instalacja zestawu pakietów tidyverse
+# wg https://github.com/tidyverse/tidyverse
+# Potrzebne tylko dplyr, ale instaluję całość
+install.packages("pak")
+pak::pak("tidyverse")
+```
+
+## GMT file
+
+```{r gmt file 1}
+# Part 1.
+# Transforming file GO - gene (go.cats)
+## File format: https://enrichmentmap.readthedocs.io/en/latest/GeneSets.html#gene-sets
+
+library(tidyverse)
+
+go2gene <- go.cats |>
+  mutate(
+    GO.ID = term_accession,
+    GENE = db_object_symbol
+  ) |>
+    dplyr::select(GO.ID, GENE)
+
+# check for missing values
+all(complete.cases(go.cats))
+all(complete.cases(go2gene))
+
+## Print in one line genes from each GO category
+flat_go2gene <- go2gene |>
+  group_by(GO.ID) |>
+  summarise(genes = paste(unique(GENE), collapse = "\t"), .groups = "drop")
+
+all(complete.cases(flat_go2gene))
+
+```
+
+## GO results for a given comparison
+
+```{r DE results 1}
+# Constructing "generic results file" as defined in EnrochmentMap documentation
+## File format https://enrichmentmap.readthedocs.io/en/latest/FileFormats.html#file-formats
+
+# Require modification of results files after goseq
+# i) enriched GO id
+# ii) list of all significant genes (plus/minus)
+
+#library(tidyverse)
+# list of names
+original_names <- grep("^[as].*(min|pl)001$", ls(), value = TRUE)
+prefix <- "ist."
+
+## Selecting gene - GO using significant genes (contains superfluous GOs - not significant in goseq)
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)
+    
+    result = go.cats |> 
+      filter(db_object_symbol %in% rownames(obj))
+    
+    new_name <- paste0(prefix, name) # create new name with prefix
+    assign(new_name, result, envir = .GlobalEnv)  # save new object
+  })
+)
+
+## Check - should be similar (not all genes have GO) to number of rows of file from DESeq2
+# list of names
+original_names <- grep("^ist\\.", ls(), value = TRUE)
+
+lapply(original_names, function(name) {
+  obj <- get(name)
+  
+  pattern <- sub("^ist\\.", "", name)
+  
+  pattern_values <- get(pattern)
+  
+  list(
+    object = name,
+    original=nrow(pattern_values),
+    result_terms = obj |>
+      distinct(db_object_symbol) |> 
+        count() |>
+      pull(n)
+  )
+  
+})
+
+## Selecting gene - GO based on significant GOs
+
+original_names <- grep("^ist\\.", ls(), value = TRUE)
+
+lapply(original_names, function(name) {
+  obj <- get(name)
+
+  # retrieving corresponding GO
+  pattern <- sub("^ist\\.", "", name)
+  bh_name <- paste0("bh.gs.pwf.gv.de.", pattern)
+
+  bh_values <- get(bh_name)
+
+  result <- obj |>
+    filter(term_accession %in% bh_values)
+
+  # name for result
+  ist_go_name <- paste0("ist_go_", name)
+
+  # save object to .GlobalEnv
+  assign(ist_go_name, result, envir = .GlobalEnv)
+  
+  ## Check, the count for both objects should be the same
+  list(
+    object = name,
+    bh_length = length(bh_values),
+    result_terms = result |> distinct(term_accession) |> count() |> pull(n)
+  )
+})
+  
+## genes for a given category in one row
+original_names <- grep("^ist_go_ist\\.", ls(), value = TRUE)
+
+lapply(original_names, function(name) {
+  obj <- get(name)
+  
+  # name for result
+  flat_name <- paste0("flat_", name)
+
+  result <- obj |>
+    group_by(term_accession) |>
+      summarise(genes = paste(unique(db_object_symbol), collapse = ","), .groups = "drop")
+  
+  # change column name
+  colnames(result) <- c("GO.ID", "genes")
+  
+  # save object to .GlobalEnv
+  assign(flat_name, result, envir = .GlobalEnv)
+  
+  # Check for missing values
+  all(complete.cases(flat_name))
+})
+
+```
+
+```{r DE results 2}
+# info for significant GOs from goseq analysis (not contain BH)
+
+# Selecting and renaming columns, also FDR computation
+## This file will contain all significant genes - needed for proper FDR computation
+## Phenotype: +1 (upregulation), -1 (downregulation) - can be concatenated and used together in EnrichmentMap
+original_names <- grep("^gs\\.pwf\\.gv\\.de\\..*min001$", ls(), value = TRUE)
+
+lapply(original_names, function(name) {
+  obj <- get(name)
+
+  # name for new object
+  adj_name <- paste0("adj_", name)
+
+result <- obj |>
+  mutate(
+    GO.ID = category,
+    Description = ifelse(is.na(term), category, term),
+    p.Val = over_represented_pvalue,
+    FDR = p.adjust(p.Val, method = "BH"),
+    Phenotype = "-1"
+  ) |>
+  select(GO.ID, Description, p.Val, FDR, Phenotype)
+
+# save result to .GlobalEnv
+assign(adj_name, result, envir = .GlobalEnv)
+
+# check 1. Number of significant GOs
+
+  list(
+    object = name,
+    dim_res = dim(result),
+    adj_res = result |> filter(FDR <= 0.05) |> count() |> pull(n)
+  )
+})
+
+original_names <- grep("^gs\\.pwf\\.gv\\.de\\..*pl001$", ls(), value = TRUE)
+
+lapply(original_names, function(name) {
+  obj <- get(name)
+  
+  # new object name
+  adj_name <- paste0("adj_", name)
+  
+  result <- obj |>
+    mutate(
+      GO.ID = category,
+      Description = ifelse(is.na(term), category, term),
+      p.Val = over_represented_pvalue,
+      FDR = p.adjust(p.Val, method = "BH"),
+      Phenotype = "+1"
+    ) |>
+    select(GO.ID, Description, p.Val, FDR, Phenotype)
+  
+  # save object to .GlobalEnv
+  assign(adj_name, result, envir = .GlobalEnv)
+  
+  adj = get(adj_name)
+  
+  # check 1. Number of significant GOs
+ 
+   list(
+    object = name,
+    dim_res = dim(result),
+    adj_res = result |> filter(FDR <= 0.05) |> count() |> pull(n)
+  )
+  
+})
+```
+
+```{r DE results 3}
+original_names <- grep("^bh\\.gs\\.pwf\\.gv\\.de\\..", ls(), value = TRUE)
+
+lapply(original_names, function(name) {
+  obj <- get(name)
+
+  pattern <- sub("^bh\\.gs\\.pwf\\.gv\\.de\\.", "", name)
+  
+  # new object name
+  adj_name <- paste0("adj_gs.pwf.gv.de.", pattern)
+  filt_name <- paste0("filt_", pattern)
+  
+  adj <- get(adj_name)
+  
+# Select only significant GOs
+result <- adj |>
+  filter(GO.ID %in% obj)
+
+# save object to .GlobalEnv
+assign(filt_name, result, envir = .GlobalEnv)
+
+filt <- get(filt_name)
+
+
+# check 2. Number of significant GOs - should equal the number from check 1.
+
+   list(
+    object = name,
+    filtered = filt |> filter(FDR <=0.05) |> count() |> pull(n)
+  )
+   
+})
+
+# list of names
+original_names <- grep("^[as][0-9].*(min|pl)001$", ls(), value = TRUE)
+
+invisible(
+lapply(original_names, function(name) {
+  obj <- get(name)
+  
+sigs_name <- paste0("sigs_", name)
+
+filt_name <- paste0("filt_", name)
+filt <- get(filt_name)
+
+flat_name <- paste0("flat_ist_go_ist.", name)
+flat <- get(flat_name)
+
+# Join by GO
+result <- filt |>
+  left_join(flat, by = "GO.ID")
+
+# save object to .GlobalEnv
+assign(sigs_name, result, envir = .GlobalEnv)
+
+})
+)
+
+# list of names
+original_names <- grep("^sigs", ls(), value = TRUE)
+
+lapply(original_names, function(name) {
+    obj <- get(name)
+
+# Save to file
+write.table(obj, file = paste0("../results/em/", name, ".tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+
+list(
+  object = name,
+  dimensions = dim(obj),
+  complete = all(complete.cases(obj))
+)
+
+})
+
+```
+
+## Expression results for a given comparison
+
+Gene annotation as described in [network-ala GitHub repo.](https://github.com/maciej-jonczyk/network-ala/blob/main/annotation.sh)
+
+```{r expression results}
+
+# Read annotation
+
+annotation <- read.table("../../../input-data/go/anno-all-wide", sep = "\t", header = FALSE, quote = "", comment.char = "")
+colnames(annotation) <- c("Name", "Description")
+
+# Check dimensions
+## should have 30220 rows
+dim(annotation)
+
+# Should be 30220
+
+# Check for missing values
+all(complete.cases(annotation))
+
+# Transform DE results
+# library(tidyverse)
+
+####################
+original_names <- grep("^[as][0-9].*(min|pl)001$", ls(), value = TRUE)
+# prefix <- "ist."
+
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)
+    
+    # Zbuduj nazwę nowego obiektu
+    de.res.anno_name <- paste0("de_res_anno.", name)
+    
+    result <- as.data.frame(obj) |>
+      rownames_to_column("Name") |>
+        select(Name, log2FoldChange) |>
+          left_join(annotation, by = "Name") |>
+            rename(!!name := log2FoldChange) |>
+              select(Name, Description, !!sym(name)) |>
+                arrange(Name)
+    
+    # Zapisz obiekt do .GlobalEnv
+    assign(de.res.anno_name, result, envir = .GlobalEnv)
+  })  
+)
+
+original_names <- grep("^de_res_anno.", ls(), value = TRUE)
+# prefix <- "ist."
+
+lapply(original_names, function(name) {
+    obj <- get(name)
+
+    # Save to file
+    write.table(obj, file = paste0("../results/em/", name, ".txt"), sep = "\t", row.names = FALSE, quote = FALSE)
+
+    # Check for missing values - there will be as not all genes have Description
+    list(
+      object = name,
+      dimensions = dim(obj),
+      complete = all(complete.cases(obj))
+    )
+        
+})    
+
+```
+
+Organize files
+
+```{bash organize files}
+
+cd ../results/em/
+
+rm -r a554_001/ s018_001/ s84_001/ s311_001/
+
+# Create directories
+mkdir -p {a554_001,s018_001,s84_001,s311_001}/{d3,d4}/{t1,t2,t3}
+
+# Move files
+
+mv *a554* a554_001/
+mv *s018* s018_001/
+mv *s84* s84_001/
+mv *s311* s311_001/
+
+# delete empty files
+find . -maxdepth 2 -type f -size -50c -delete
+
+cd a554_001/
+mv *d3d2* d3
+mv *d4d2* d4
+
+cd d3/
+mv *t1_* t1
+mv *t2_* t2
+mv *t3_* t3
+cd ../d4/
+mv *t1_* t1
+mv *t2_* t2
+mv *t3_* t3
+
+cd ../..
+
+cd s018_001/
+mv *d3d2* d3
+mv *d4d2* d4
+
+cd d3/
+mv *t1_* t1
+mv *t2_* t2
+mv *t3_* t3
+cd ../d4/
+mv *t1_* t1
+mv *t2_* t2
+mv *t3_* t3
+
+cd ../..
+
+cd s84_001/
+mv *d3d2* d3
+mv *d4d2* d4
+
+cd d3/
+mv *t1_* t1
+mv *t2_* t2
+mv *t3_* t3
+cd ../d4/
+mv *t1_* t1
+mv *t2_* t2
+mv *t3_* t3
+
+cd ../..
+
+cd s311_001/
+mv *d3d2* d3
+mv *d4d2* d4
+
+cd d3/
+mv *t1_* t1
+mv *t2_* t2
+mv *t3_* t3
+cd ../d4/
+mv *t1_* t1
+mv *t2_* t2
+mv *t3_* t3
+
+
+# Remove dirs without significant enrichment (no sigs... files)
+rm -r a554_001/d3/t3/
+rm -r a554_001/d4/t3/
+
+cd ../..
+# Join files (significant genes) by variant
+
+cat a554_001/d3/t1/de* | sort | tail -n +2 > a554_001/d3/t1/de_a554_d3d2_t1.txt
+cat a554_001/d3/t2/de* | sort | tail -n +2 > a554_001/d3/t2/de_a554_d3d2_t2.txt
+cat a554_001/d3/t3/de* | sort | tail -n +2 > a554_001/d3/t3/de_a554_d3d2_t3.txt
+
+cat a554_001/d4/t1/de* | sort | tail -n +2 > a554_001/d4/t1/de_a554_d4d2_t1.txt
+cat a554_001/d4/t2/de* | sort | tail -n +2 > a554_001/d4/t2/de_a554_d4d2_t2.txt
+cat a554_001/d4/t3/de* | sort | tail -n +2 > a554_001/d4/t3/de_a554_d4d2_t3.txt
+
+cat s018_001/d3/t1/de* | sort | tail -n +2 > s018_001/d3/t1/de_s018_d3d2_t1.txt
+cat s018_001/d3/t2/de* | sort | tail -n +2 > s018_001/d3/t2/de_s018_d3d2_t2.txt
+cat s018_001/d3/t3/de* | sort | tail -n +2 > s018_001/d3/t3/de_s018_d3d2_t3.txt
+
+cat s018_001/d4/t1/de* | sort | tail -n +2 > s018_001/d4/t1/de_s018_d4d2_t1.txt
+cat s018_001/d4/t2/de* | sort | tail -n +2 > s018_001/d4/t2/de_s018_d4d2_t2.txt
+cat s018_001/d4/t3/de* | sort | tail -n +2 > s018_001/d4/t3/de_s018_d4d2_t3.txt
+
+cat s84_001/d3/t1/de* | sort | tail -n +2 > s84_001/d3/t1/de_s84_d3d2_t1.txt
+cat s84_001/d3/t2/de* | sort | tail -n +2 > s84_001/d3/t2/de_s84_d3d2_t2.txt
+cat s84_001/d3/t3/de* | sort | tail -n +2 > s84_001/d3/t3/de_s84_d3d2_t3.txt
+
+cat s84_001/d4/t1/de* | sort | tail -n +2 > s84_001/d4/t1/de_s84_d4d2_t1.txt
+cat s84_001/d4/t2/de* | sort | tail -n +2 > s84_001/d4/t2/de_s84_d4d2_t2.txt
+cat s84_001/d4/t3/de* | sort | tail -n +2 > s84_001/d4/t3/de_s84_d4d2_t3.txt
+
+cat s311_001/d3/t1/de* | sort | tail -n +2 > s311_001/d3/t1/de_s311_d3d2_t1.txt
+cat s311_001/d3/t2/de* | sort | tail -n +2 > s311_001/d3/t2/de_s311_d3d2_t2.txt
+cat s311_001/d3/t3/de* | sort | tail -n +2 > s311_001/d3/t3/de_s311_d3d2_t3.txt
+
+cat s311_001/d4/t1/de* | sort | tail -n +2 > s311_001/d4/t1/de_s311_d4d2_t1.txt
+cat s311_001/d4/t2/de* | sort | tail -n +2 > s311_001/d4/t2/de_s311_d4d2_t2.txt
+cat s311_001/d4/t3/de* | sort | tail -n +2 > s311_001/d4/t3/de_s311_d4d2_t3.txt
+
+# Join files (significant GOs) by variant
+
+cat a554_001/d3/t1/sigs* | sort -r | tail -n +2 > a554_001/d3/t1/sigs_a554_d3d2_t1.tsv
+cat a554_001/d3/t2/sigs* | sort -r | tail -n +2 > a554_001/d3/t2/sigs_a554_d3d2_t2.tsv
+cat a554_001/d3/t3/sigs* | sort -r | tail -n +2 > a554_001/d3/t3/sigs_a554_d3d2_t3.tsv
+
+cat a554_001/d4/t1/sigs* | sort -r | tail -n +2 > a554_001/d4/t1/sigs_a554_d4d2_t1.tsv
+cat a554_001/d4/t2/sigs* | sort -r | tail -n +2 > a554_001/d4/t2/sigs_a554_d4d2_t2.tsv
+cat a554_001/d4/t3/sigs* | sort -r | tail -n +2 > a554_001/d4/t3/sigs_a554_d4d2_t3.tsv
+
+cat s018_001/d3/t1/sigs* | sort -r | tail -n +2 > s018_001/d3/t1/sigs_s018_d3d2_t1.tsv
+cat s018_001/d3/t2/sigs* | sort -r | tail -n +2 > s018_001/d3/t2/sigs_s018_d3d2_t2.tsv
+cat s018_001/d3/t3/sigs* | sort -r | tail -n +2 > s018_001/d3/t3/sigs_s018_d3d2_t3.tsv
+
+cat s018_001/d4/t1/sigs* | sort -r | tail -n +2 > s018_001/d4/t1/sigs_s018_d4d2_t1.tsv
+cat s018_001/d4/t2/sigs* | sort -r | tail -n +2 > s018_001/d4/t2/sigs_s018_d4d2_t2.tsv
+cat s018_001/d4/t3/sigs* | sort -r | tail -n +2 > s018_001/d4/t3/sigs_s018_d4d2_t3.tsv
+
+cat s84_001/d3/t1/sigs* | sort -r | tail -n +2 > s84_001/d3/t1/sigs_s84_d3d2_t1.tsv
+cat s84_001/d3/t2/sigs* | sort -r | tail -n +2 > s84_001/d3/t2/sigs_s84_d3d2_t2.tsv
+cat s84_001/d3/t3/sigs* | sort -r | tail -n +2 > s84_001/d3/t3/sigs_s84_d3d2_t3.tsv
+
+cat s84_001/d4/t1/sigs* | sort -r | tail -n +2 > s84_001/d4/t1/sigs_s84_d4d2_t1.tsv
+cat s84_001/d4/t2/sigs* | sort -r | tail -n +2 > s84_001/d4/t2/sigs_s84_d4d2_t2.tsv
+cat s84_001/d4/t3/sigs* | sort -r | tail -n +2 > s84_001/d4/t3/sigs_s84_d4d2_t3.tsv
+
+cat s311_001/d3/t1/sigs* | sort -r | tail -n +2 > s311_001/d3/t1/sigs_s311_d3d2_t1.tsv
+cat s311_001/d3/t2/sigs* | sort -r | tail -n +2 > s311_001/d3/t2/sigs_s311_d3d2_t2.tsv
+cat s311_001/d3/t3/sigs* | sort -r | tail -n +2 > s311_001/d3/t3/sigs_s311_d3d2_t3.tsv
+
+cat s311_001/d4/t1/sigs* | sort -r | tail -n +2 > s311_001/d4/t1/sigs_s311_d4d2_t1.tsv
+cat s311_001/d4/t2/sigs* | sort -r | tail -n +2 > s311_001/d4/t2/sigs_s311_d4d2_t2.tsv
+cat s311_001/d4/t3/sigs* | sort -r | tail -n +2 > s311_001/d4/t3/sigs_s311_d4d2_t3.tsv
+```
+
+## References

@@ -1,0 +1,174 @@
+---
+title: "Selecting genes from provided significant GO category"
+format: html
+date: "2025-08-22"
+bibliography: refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+:::{.callout-note}
+For html creation purposes I've turned off code execution.
+:::
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/sam/scripts")
+```
+
+```{r}
+#| eval: false
+#| output: false
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+# Clean working directory
+rm(list=ls())
+```
+
+## Identify comparisons with with selected category significant
+
+### Load and cleanup
+
+```{r load}
+load("../rdata-saved/goseq-bh-res_SAM1.RDa")
+
+# Identify objects of length 0
+empty_vars <- ls()[sapply(ls(), function(x) length(get(x)) == 0)]
+
+# remove them
+rm(list = empty_vars)
+```
+
+### Set GO category and paths
+
+```{r values}
+# uncomment needed rows
+
+# cat_id = "GO:0048511" # rhythmic process
+# cat = "rhyth_proc_"
+
+# cat_id = "GO:0007623" # circadian rhythm
+# cat = "circ_rhyth_"
+
+# cat_id = "GO:0042752" # regulation of circadian rhythm
+# cat = "reg_circ_"
+
+# cat_id = "GO:0042753" # positive regulation of circadian rhythm
+# cat = "pos_reg_circ_"
+
+# cat_id = "GO:0010378" # temperature compensation of the circadian clock
+# cat = "temp_comp_"
+
+# cat_id = "GO:0043153" # entrainment of circadian clock by photoperiod
+# cat = "entr_photo_"
+ 
+# cat_id = "GO:0048573" # photoperiodism, flowering
+# cat = "photo_flower_"
+
+# cat_id = "GO:0048574" # long-day photoperiodism, flowering
+# cat = "long_day_flower_"
+
+```
+
+### Keep only files with selected category (GO:0048511)
+```{r keep}
+
+original_names <- grep("^bh.", ls(), value = TRUE)
+
+invisible(
+  lapply(original_names, function(name) {
+  obj <- get(name)
+      if (!(cat_id %in% obj)) {
+        rm(list = name, envir = .GlobalEnv)   # usuwa obiekt x z pamięci
+      }
+    }
+  )
+)
+```
+
+### Keep only DESeq results matching GO results
+
+```{r keep2}
+load("../rdata-saved/sigs_SAM1.RDa")
+
+# all DESeq2 results
+pattern_names <- grep("^[as].*sam_(min|pl)$", ls(), value = TRUE)
+
+# all significant GO results
+sig_go <- ls(pattern = "^bh\\.")
+
+# wyciągnij końcówki (po prefiksie)
+to_keep <- sub("^bh\\.gs\\.pwf\\.gv\\.de\\.", "", sig_go)
+
+# remove DESeq results not matching GO results
+
+rm(list = setdiff(pattern_names, to_keep), envir = .GlobalEnv)
+
+```
+
+## All genes with the category
+
+```{r cats}
+# gene - GO mapping
+go.cats=read.table("../../../input-data/go/go.cats", header = TRUE, stringsAsFactors = FALSE)
+
+x=go.cats[go.cats$term_accession == cat_id, ]
+
+all_cat = x$db_object_symbol
+```
+
+## Select genes with a given GO annotation
+
+```{r select}
+original_names <- grep("^[as].*sam_(min|pl)$", ls(), value = TRUE)
+
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)
+    result=obj[rownames(obj) %in% all_cat, ]
+    
+    new_name <- paste0(cat, name)
+    
+    assign(new_name, result, envir = .GlobalEnv)  # save new object
+    }
+  )
+)
+```
+
+## Add functional annotation
+
+```{r funct2}
+anno = read.table("../../../../anno_fun_v45/anno-all-wide", header=FALSE, sep="\t", quote = "")
+
+library(dplyr)
+
+original_names <- grep(paste0("^", cat), ls(), value = TRUE)
+
+invisible(
+    lapply(original_names, function(name) {
+      obj <- get(name)
+  
+  x = as.data.frame(obj) # transform to data frame
+  x$gene_id <- rownames(x)   # rownames to column
+  
+  result <- left_join(x, anno, by = c("gene_id" = "V1")) |>
+    select(gene_id, log2FoldChange, padj, V2) |>
+      rename(description = V2)
+  
+  new_name <- paste0("ann_", name)
+  assign(new_name, result, envir = .GlobalEnv)  # save new object
+  
+  # Save to file
+  write.table(result, file = paste0("../results/go/clock/", new_name, ".csv"), sep = "\t", row.names = FALSE, quote = FALSE)
+    }
+  )
+)
+
+```

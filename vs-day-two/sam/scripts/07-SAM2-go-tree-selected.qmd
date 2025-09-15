@@ -1,0 +1,78 @@
+---
+title: "Draw tree for selected significant GOs (Biolgical Process class), SAM"
+format: html
+date: "2025-07-11"
+bibliography: refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/media/mj/ANTIX-LIVE/project1-stat/vs-day-two/SAM/scripts")
+```
+
+Built with R version `r getRversion()`
+
+# Data preparation
+
+## Environment cleaning and set-up
+
+```{r}
+#| output: false
+#| message: false
+# Set working directory
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+
+rm(list=ls())
+```
+
+:::{.callout-note}
+This script is based on [06-SAM2-go-tree.qmd](./06-SAM2-go-tree.qmd) and is semi-manual.
+:::
+
+```{bash BP only}
+# From GO-lists are selected only those selected
+
+rm -r ../results/go/graphs/bp_only/selected/
+
+mkdir ../results/go/graphs/bp_only/selected/
+
+cd ../results/go/graphs/bp_only/selected/
+
+cp ../a554_d3d2_t2_sam_min.bp . # this one without changes
+
+```
+
+```{bash rm empty}
+find ../results/go/graphs/bp_only/ -maxdepth 1 -type f -size 0c -delete
+```
+
+Using [goatools](https://github.com/tanghaibao/goatools/blob/main/doc/md/README_go_plot.md#six-different-colored-go-terms-without-relationships)
+
+```{bash draw}
+
+rm -r ../results/go/graphs/png/
+
+mkdir ../results/go/graphs/png/
+
+cd ../results/go/graphs/bp_only/
+
+sample_names=($(ls *))
+
+for sample in ${sample_names[@]}
+do
+go_plot.py --obo=../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../png/${sample}.png
+done
+```
+
+```{bash compress}
+cd ../results/go/graphs
+
+zip -r SAM-png.zip png/
+
+```
+
+## References

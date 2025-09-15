@@ -1,0 +1,503 @@
+---
+title: "Explorative Data Analysis - cold and regrowth"
+format: html
+date: "2025-07-08"
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/eda/scripts")
+```
+
+Built with R version `r getRversion()`
+
+# Data preparation
+
+## Environment cleaning and set-up
+
+```{r}
+#| output: false
+#| message: false
+# Set working directory
+# setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+
+rm(list=ls())
+```
+
+
+```{r}
+#| eval: false
+#| output: false
+#| message: false
+# Clean working directory, if needed
+rm(list=ls())
+# Install required packages
+## From Bioconductor
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("GenomicRanges")
+BiocManager::install("DESeq2")
+BiocManager::install("genefilter")
+BiocManager::install("apeglm")
+
+## From CRAN
+install.packages("pheatmap")
+install.packages("RColorBrewer")
+install.packages("viridis")
+install.packages("PoiClaClu")
+install.packages("glmpca")
+install.packages("ggplot2")
+install.packages("dplyr")
+```
+
+## Load data
+
+Loading of count data and metadata.
+```{r data-loading, cache=TRUE}
+#| output: false
+#| message: false
+
+# previously prepared range data
+library("GenomicRanges")
+load("../../input-data/rdata/ranges.RDa")
+
+# count data
+cts <- as.matrix(read.table("../../input-data/counts/counts4r123p", sep="\t", header=T, row.names="Geneid"))
+# check
+dim(cts)
+cts[1:5, 1:5]
+
+# read-in sample data
+coldata=read.table("../../input-data/counts/coldata4r", sep="\t", header=T, row.names=1)
+#check
+dim(coldata)
+colnames(coldata)
+class(coldata)
+coldata[1:5, ]
+str(coldata)
+
+# bin Million of reads
+coldata$Mread_bin <- cut(coldata$Mreads, breaks = 7)  # 7 bins
+
+## make factors
+library(dplyr)
+
+coldata <- coldata |>
+  mutate(across(c(letter, tissue, line, time, day, rep, condition, rep, batch, Mread_bin), as.factor))
+str(coldata)
+
+# I don't know if Mreads (rounded million of reads) should be factor
+
+# Check if files are in concert
+all(rownames(coldata) %in% colnames(cts))
+all(rownames(coldata) == colnames(cts))
+
+# Save coldata and counts to R file for reuse
+save(coldata, cts, file="../../input-data/rdata/counts_and_metadata.RDa")
+```
+
+## Create DEseq Data Set
+
+```{r dds, cache=TRUE}
+#| output: false
+#| message: false
+library("DESeq2")
+# create dataset, design included only for command completeness, different will be used
+dds=DESeqDataSetFromMatrix(countData=cts, colData=coldata, rowRanges=gzakresy, design= ~ tissue+line+time)
+```
+
+## Pre-filtering
+
+```{r filter, cache=TRUE}
+# keeping genes having at least 3 samples with a count of 10 or higher
+keep <- rowSums(counts(dds) >= 10) >= 3
+dds.f <- dds[keep,]
+dim(dds.f)
+
+# what percent of genes remained?
+100*(dim(dds.f)[1]/dim(dds)[1])
+```
+
+::: {.callout-important title="Advice from Peter Langfelder (WGCNA creator)"}
+I would normalize and transform the data using
+`varianceStabilizingTransformation` from `DESeq2`, then cluster samples
+and/or calculate latent factors such as principal components or
+Surrogate Variables (R package `sva`) and see whether sequencing depth
+has a large effect (whether it correlates with the leading latent
+factors). If it does not, I would not worry about it; if it does, you
+can try to adjust the data but it's questionable whether linear models
+are a suitable way to model the effect of sequencing depth that
+remains after normalization.
+:::
+
+## Normalization
+
+According to [post](https://www.biostars.org/p/459013/#459016) `varianceStabilizingTransformation` not `vst` is used. Design is provided here only because it is required in `dds` object. Here full data are explored but eventually it will be analyzed separately by tissue. Also, it makes no sense using `blind=FALSE` here.
+
+```{r normalize, cache=TRUE}
+vsd=varianceStabilizingTransformation(dds.f, blind=TRUE)
+```
+
+# Explorarive data analysis
+
+```{r packages-visual, cache=TRUE}
+#| output: false
+#| message: false
+library(pheatmap)
+library(RColorBrewer)
+library(viridis)
+library(PoiClaClu)
+library(DESeq2)
+library(ggplot2)
+```
+
+## Heatmaps
+
+```{r dists, cache=TRUE}
+#| output: false
+#| message: false
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix( sampleDists )
+```
+
+```{r heat-basic, fig.width=10, fig.height=10, fig.dpi=600}
+#| eval: false
+rownames(sampleDistMatrix) <- paste( vsd$tissue, vsd$line, vsd$time, vsd$day, vsd$rep, sep = " - " )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+#png("heat.png", width=50, height=50, units="cm", res=150)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+#dev.off()
+```
+
+```{r heat-batch, fig.width=10, fig.height=10, fig.dpi=600}
+#| eval: false
+# names
+rownames(sampleDistMatrix) <- colnames(vsd)
+colnames(sampleDistMatrix) <- colnames(vsd)
+
+# annotation
+batch <- data.frame(batch = vsd$batch)
+rownames(batch) <- colnames(vsd)  # match names
+
+# colors
+batch_levels <- unique(batch$batch)
+batch_colors <- setNames(RColorBrewer::brewer.pal(length(batch_levels), "Set2"), batch_levels)
+ann_colors <- list(batch = batch_colors)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+
+# heatmap
+#png("heat-batch.png", width=50, height=50, units="cm", res=150)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         annotation_col = batch,
+         annotation_row = batch,
+         annotation_colors = ann_colors)
+#dev.off()
+```
+
+```{r heat-batch-powt, fig.width=10, fig.height=10, fig.dpi=600}
+# names
+rownames(sampleDistMatrix) <- colnames(vsd)
+colnames(sampleDistMatrix) <- colnames(vsd)
+
+# annotation
+annotation_col <- data.frame(
+  batch = vsd$batch,
+  powtorzenie = vsd$rep
+)
+rownames(annotation_col) <- colnames(vsd)
+
+# colors
+ann_colors <- list(
+  batch = setNames(brewer.pal(length(unique(vsd$batch)), "Set2"), unique(vsd$batch)),
+  powtorzenie = setNames(brewer.pal(length(unique(vsd$rep)), "Pastel1"), unique(vsd$rep))
+)
+
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+
+# heatmap
+#png("heat-batch-powt.png", width=50, height=50, units="cm", res=150)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         annotation_col = annotation_col,
+         annotation_row = annotation_col,
+         annotation_colors = ann_colors)
+#dev.off()
+```
+
+```{r heat-line, fig.width=10, fig.height=10, fig.dpi=600}
+# names
+rownames(sampleDistMatrix) <- colnames(vsd)
+colnames(sampleDistMatrix) <- colnames(vsd)
+
+# annotation
+line <- data.frame(line = vsd$line)
+rownames(line) <- colnames(vsd)  # match names
+
+# colors
+line_levels <- unique(line$line)
+line_colors <- setNames(RColorBrewer::brewer.pal(length(line_levels), "Set2"), line_levels)
+ann_colors <- list(line = line_colors)
+
+# heatmap
+#png("heat-line.png", width=50, height=50, units="cm", res=150)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         annotation_col = line,
+         annotation_row = line,
+         annotation_colors = ann_colors)
+#dev.off()
+```
+
+```{r heat-Mreads, fig.width=10, fig.height=10, fig.dpi=600}
+rownames(sampleDistMatrix) <- colnames(vsd)
+colnames(sampleDistMatrix) <- colnames(vsd)
+
+# Column with "millions of reads"
+reads <- vsd$Mreads
+
+# Binning to 7 equal bins
+reads_bin <- cut(reads, breaks = 7, include.lowest = TRUE)
+
+# Column annotation
+annotation_col <- data.frame(reads_bin = reads_bin)
+rownames(annotation_col) <- colnames(vsd)
+
+# Nice continous palette with contrast + good for people with colour vision defects
+
+reads_colors <- setNames(
+  viridis::viridis(7, option = "A"),  # options: "D", "C", "A", etc.
+  levels(reads_bin)
+)
+
+# For annotation_colors
+annotation_colors <- list(reads_bin = reads_colors)
+
+# plot
+#png("heat-reads-a.png", width=50, height=50, units="cm", res=150)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         annotation_col = annotation_col,
+         annotation_row = annotation_col,
+         annotation_colors = annotation_colors)
+#dev.off()
+```
+
+### Heatmaps with Poisson distance
+
+::: {.callout-note}
+Heatmaps generated with Poisson distance does not show nothing new - they'll be hidden.
+:::
+
+```{r dists-poi, cache=TRUE}
+#| output: false
+#| message: false
+#| eval: false
+#| include: false
+poisd <- PoissonDistance(t(counts(dds.f)))
+samplePoisDistMatrix <- as.matrix( poisd$dd )
+```
+
+```{r poi-basic, fig.width=10, fig.height=10, fig.dpi=600}
+#| eval: false
+#| include: false
+rownames(samplePoisDistMatrix) <- paste( vsd$tk, vsd$ln, vsd$time, vsd$day, vsd$powt, sep = " - " )
+colnames(samplePoisDistMatrix) <- NULL
+#png("poi-basic.png", width=50, height=50, units="cm", res=150)
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows = poisd$dd,
+         clustering_distance_cols = poisd$dd,
+         col = colors)
+#dev.off()
+```
+
+```{r poi-batch, fig.width=10, fig.height=10, fig.dpi=600}
+#| eval: false
+#| include: false
+rownames(samplePoisDistMatrix) <- paste( vsd$tk, vsd$ln, vsd$time, vsd$day, vsd$powt, sep = " - " )
+colnames(samplePoisDistMatrix) <- NULL
+#png("poi-basic.png", width=50, height=50, units="cm", res=150)
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows = poisd$dd,
+         clustering_distance_cols = poisd$dd,
+         col = colors)
+#dev.off()
+```
+
+```{r poi-batch-powt, fig.width=10, fig.height=10, fig.dpi=600}
+#| eval: false
+#| include: false
+# names
+rownames(samplePoisDistMatrix) <- colnames(vsd)
+colnames(samplePoisDistMatrix) <- colnames(vsd)
+
+# annotation
+annotation_col <- data.frame(
+  batch = vsd$batch,
+  powtorzenie = vsd$rep
+)
+rownames(annotation_col) <- colnames(vsd)
+
+# colors
+ann_colors <- list(
+  batch = setNames(brewer.pal(length(unique(vsd$batch)), "Set2"), unique(vsd$batch)),
+  powtorzenie = setNames(brewer.pal(length(unique(vsd$rep)), "Pastel1"), unique(vsd$rep))
+)
+
+#png("poi-batch-powt.png", width=50, height=50, units="cm", res=150)
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         annotation_col = annotation_col,
+         annotation_row = annotation_col,
+         annotation_colors = ann_colors)
+#dev.off()
+```
+
+```{r poi-line, fig.width=10, fig.height=10, fig.dpi=600}
+#| eval: false
+#| include: false
+# names
+rownames(samplePoisDistMatrix) <- colnames(vsd)
+colnames(samplePoisDistMatrix) <- colnames(vsd)
+
+# annotation
+line <- data.frame(line = vsd$line)
+rownames(line) <- colnames(vsd)  # match names
+
+# colors
+line_levels <- unique(line$line)
+line_colors <- setNames(RColorBrewer::brewer.pal(length(line_levels), "Set2"), line_levels)
+ann_colors <- list(line = line_colors)
+
+#png("poi-line.png", width=50, height=50, units="cm", res=150)
+pheatmap(samplePoisDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         annotation_col = line,
+         annotation_row = line,
+         annotation_colors = ann_colors)
+#dev.off()
+```
+
+```{r poi-Mreads, fig.width=10, fig.height=10, fig.dpi=600}
+#| eval: false
+#| include: false
+# names
+rownames(samplePoisDistMatrix) <- colnames(vsd)
+colnames(samplePoisDistMatrix) <- colnames(vsd)
+
+# data
+reads <- vsd$Mreads
+
+# 1. make 6 bins
+reads_bin <- cut(reads, breaks = 7, include.lowest = TRUE)
+
+# 2. column annotation (heatmap samples in columns)
+annotation_col <- data.frame(reads_bin = reads_bin)
+rownames(annotation_col) <- colnames(vsd)
+
+# good continuous palette with good contrast 
+# good for color impaired people
+
+reads_colors <- setNames(
+  viridis::viridis(7, option = "A"),  # options: "D", "C", "A", itd.
+  levels(reads_bin)
+)
+
+# Do annotation_colors
+annotation_colors <- list(reads_bin = reads_colors)
+
+#png("poi-reads-a.png", width=50, height=50, units="cm", res=150)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         annotation_col = annotation_col,
+         annotation_row = annotation_col,
+         annotation_colors = annotation_colors)
+#dev.off()
+```
+
+## PCA plots
+
+Dataset is partitioned primarily by tissue
+```{r pca-tissue, cache=TRUE}
+plotPCA(vsd, intgroup = c("tissue"), ntop=33000) +
+  ggtitle("PCA – color by tissue") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+Separation by line is also visible in PC2
+```{r pca-line, cache=TRUE}
+plotPCA(vsd, intgroup = c("line"), ntop=33000) +
+  ggtitle("PCA – color by inbred line") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r pca-pcs23, cache=TRUE}
+#| eval: false
+#| include: false
+# Code to see the separation of samples in PC2 and PC3
+# Little variance so not showing it in report
+plotPCA(vsd, intgroup = c("Mread_bin"), ntop=33000, pcs=2:3) +
+  ggtitle("PCA – color by binned million of reads") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+So tissues should be analyzed separately
+
+# Splitting of data by tissue
+
+```{r split-data, cache=TRUE}
+# https://bioconductor.org/packages/devel/bioc/vignettes/SummarizedExperiment/inst/doc/SummarizedExperiment.html#subsetting
+vsd.leaf=vsd[, vsd$tissue == 'leaf']
+vsd.sam=vsd[, vsd$tissue == 'sam']
+
+# check
+dim(vsd.leaf)
+dim(vsd.sam)
+```
+
+Datasets are separated by tissue
+```{r pca-tissues, cache=TRUE}
+#| layout-ncol: 2
+plotPCA(vsd.leaf, intgroup = c("line"), ntop=33000) +
+  ggtitle("PCA for leaf – color by inbred line") +
+  theme(plot.title = element_text(hjust = 0.5))
+plotPCA(vsd.sam, intgroup = c("line"), ntop=33000) +
+  ggtitle("PCA for sam – color by inbred line") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+Neither of remaining factors (time, day, rep, batch, million reads) are separating samples so it is not shown.
+
+It is noteworthy, that variance of PC3 is not very smaller than that of PC2. PC4 explains only 6% of variance.
+Interesting effect is visible when plotting PCs 2 and 3. Line a554 is separated from the rest in SAM but not in leaf where S84 outstands.
+```{r pca23-line, cache=TRUE}
+#| layout-ncol: 2
+plotPCA(vsd.leaf, intgroup = c("line"), ntop=33000, pcs=2:3) +
+  ggtitle("PCA for leaf – color by inbred line") +
+  theme(plot.title = element_text(hjust = 0.5))
+plotPCA(vsd.sam, intgroup = c("line"), ntop=33000, pcs=2:3) +
+  ggtitle("PCA for sam – color by inbred line") +
+  theme(plot.title = element_text(hjust = 0.5))
+```

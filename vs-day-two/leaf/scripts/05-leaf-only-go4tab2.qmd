@@ -1,0 +1,316 @@
+---
+title: "Retrieving of GO results for table construction, comparisons to 2nd day of cold"
+format: html
+date: "2025-07-09"
+bibliography: refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-two/leaf/scripts")
+```
+
+Built with R version `r getRversion()`
+
+The aim of this code is to retrieve significant GOs along with numerical data used for test.
+This data is planned for use in an article like in @sobkowiakMolecular2016
+
+# Data preparation
+
+## Environment cleaning and set-up
+
+```{r}
+#| output: false
+#| message: false
+# Set working directory
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+
+rm(list=ls())
+
+library(tidyverse)
+```
+
+## Loading results
+
+```{r load objects}
+# goseq without BH correction (gs...) as objects after correction (bh...) contain only GO IDs with adjusted p-value below threshold
+load("../rdata-saved/goseq-res-leaf2.RDa")
+load("../rdata-saved/goseq-bh-res-leaf2.RDa")
+
+# Lists of significant genes (from DESeq2)
+load("../rdata-saved/sigs-leaf2.RDa")
+
+```
+
+## Data extraction
+
+The resulting `gs...` files contain numDEInCat (*Study Term*) and numInCat (*Pop Term*).
+
+## Total number of genes with GO annotation (*Pop Total*)
+
+This number is retrieved from gaf file from @[wimalanathanMaizeGOAnnotation2018]
+
+```{bash Pop Total}
+
+cut -f2 ../../../input-data/go/3.1_B73v5.MaizeGDB.CLEANED.gaf | sort -u | grep -E '^Zm' | wc -l
+
+# 39756
+
+```
+
+## Determining Study Total
+
+Total number of significant genes with GO annotation in a given set.
+
+### Processing all files in loop
+
+```{r Study Total lapply}
+
+# gene - GO mapping
+go.cats=read.table("../../../input-data/go/go.cats", header = TRUE, stringsAsFactors = FALSE)
+
+# 1. transform DESeq2 object to data-frame
+# 2. select gene IDs that are in go.cats (i.e. have GO annotation)
+# 3. Put gene ID from row names to new column
+# 4. Count unique gene IDs' names
+
+original_names <- grep("^[as].*(min|pl)$", ls(), value = TRUE)
+
+invisible(
+lapply(original_names, function(name) {
+  obj <- get(name)
+
+  # name for result
+  studyTotal_name <- paste0("st_", name)
+
+result <- as.data.frame(obj) |>
+  filter(rownames(as.data.frame(obj)) %in% go.cats$db_object_symbol) |>
+    rownames_to_column("Name") |> 
+      distinct(Name) |>
+        count() |>
+          pull(n)
+
+    assign(studyTotal_name, result, envir = .GlobalEnv)  # save new object
+    
+})
+)
+
+# Export data for checking in bash
+#write.table(as.data.frame(a554_d3d1_t1_min), "xa554d3t1min", quote=FALSE)
+
+```
+
+
+## Prepare final objects
+
+```{r final}
+original_names <- grep("^gs\\.pwf\\.gv\\.de\\..*$", ls(), value = TRUE)
+
+invisible(
+lapply(original_names, function(name) {
+  obj <- get(name)
+  
+  # Retrieve core name
+  core_name = sub("^gs\\.pwf\\.gv\\.de\\.", "", name)
+  
+  # name for new object with all results
+  adj_name <- paste0("adj_", core_name)
+  
+  # name of object with studyTotal value
+  studyTotal_name <- paste0("st_", core_name)
+  
+  # retrieve value for Study Total
+  studyTotal <- get(studyTotal_name)
+  
+  
+  result <- obj |>
+    mutate(
+      GO.ID = category,
+      Description = term,
+      p.Val = over_represented_pvalue,
+      FDR = p.adjust(p.Val, method = "BH"),
+      studyTerm = numDEInCat,
+      popTerm = numInCat,
+      studyTotal = studyTotal,
+      popTotal = 39756
+    ) |>
+      filter(FDR <= 0.05) |>
+        select(GO.ID, Description, p.Val, FDR, studyTerm, popTerm, studyTotal, popTotal)
+  
+  # save result to .GlobalEnv
+  assign(adj_name, result, envir = .GlobalEnv)
+
+# Save to file
+write.table(result, file = paste0("../results/go/sig_go_tab/", adj_name, ".txt"), sep = "\t", row.names = FALSE, quote = FALSE)
+  
+})
+)
+```
+
+# Check the number of significant GOs
+
+```{r check sig GO}
+original_names <- grep("^adj.*", ls(), value = TRUE)
+
+invisible(
+lapply(original_names, function(name) {
+  obj <- get(name)
+  
+  # Retrieve core name
+  core_name = sub("^adj_", "", name)
+  
+  # name for new object with all results
+  bh_name <- paste0("bh.gs.pwf.gv.de.", core_name)
+  
+  bh = get(bh_name)
+
+  print(all(obj$GO.ID %in% bh))
+})
+)
+```
+
+<!-- ### Test for one comparison -->
+
+<!-- ```{r Study Total single} -->
+
+<!-- # gene - GO mapping -->
+<!-- go.cats=read.table("go.source.data/go.cats", header = TRUE, stringsAsFactors = FALSE) -->
+
+<!-- # 1. transform DESeq2 object to data-frame -->
+<!-- # 2. select gene IDs that are in go.cats (i.e. have GO annotation) -->
+<!-- # 3. Put gene ID from row names to new column -->
+<!-- # 4. Count unique gene IDs' names -->
+<!-- x <- as.data.frame(a554_d3d1_t1_min) |> -->
+<!--   filter(rownames(as.data.frame(a554_d3d1_t1_min)) %in% go.cats$db_object_symbol) |> -->
+<!--     rownames_to_column("Name") |>  -->
+<!--       distinct(Name) |> -->
+<!--         count() |> -->
+<!--           pull(n) -->
+
+<!-- # Write result to a new column -->
+<!-- x2 = ist_go_a554_d3d1_t1_min -->
+<!-- x2$studyTotal = x -->
+
+<!-- # Write Pop Total to a new column -->
+<!-- x2$popTotal = 39756 # from gaf file -->
+
+<!-- # Export data for checking in bash -->
+<!-- #write.table(as.data.frame(a554_d3d1_t1_min), "xa554d3t1min", quote=FALSE) -->
+
+<!-- ``` -->
+
+<!-- Check in `bash` -->
+
+<!-- ```{bash Study Total single bash} -->
+<!-- #| eval: false -->
+
+<!-- # Unique significant genes -->
+<!-- cut -f1 -d' ' xa554d3t1min | tail -n +2 | sort -u > xnumgen -->
+
+<!-- # Unique genes with GO annotation -->
+<!-- grep -f xnumgen go.source.data/go.cats | sort -k1,1 -u -t $'\t' | wc -l -->
+
+<!-- ``` -->
+
+## Summarized results
+
+```{r summary}
+
+# Gathering all data frames into a list
+object_names <- ls(pattern = "^adj.*")
+dfs <- lapply(object_names, get)
+names(dfs) <- object_names
+
+library(dplyr)
+library(purrr)
+
+# Zbierz wszystkie unikalne wartości
+all_values <- dfs |>
+  map(~ .x$GO.ID) |>
+    unlist() |>
+      unique()
+
+# Zbuduj ramkę pokazującą, w których obiektach dany gen występuje
+# Inicjalizacja tabeli wynikowej
+summary_df <- tibble(GO.ID = all_values)
+
+# Wypełnianie kolumn: jeśli gen jest w df → wpisz nazwę df, jeśli nie → NA
+for (df_name in names(dfs)) {
+  summary_df[[df_name]] <- ifelse(
+    summary_df$GO.ID %in% dfs[[df_name]]$GO.ID,
+    df_name,
+    NA
+  )
+}
+
+# Save summary table
+write.table(summary_df, "../results/go/sig_go_tab/summary_sig_go-leaf2.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+## Add GO description and class
+
+In `bash`
+
+```{bash prep GO}
+
+cd ../../../input-data/go/
+
+# Remove column names
+tail -n +2 go_terms2class.txt > x
+
+# Join file with description and class
+join -j1 -t $'\t' go_terms_clean.tsv x > go_terms_class
+
+```
+
+```{bash add GO info}
+cd ../results/go/sig_go_tab/
+# sort summary table
+sort -k1,1 -t $'\t' summary_sig_go-leaf2.txt > x
+
+# Add description and class to summary table
+join -j1 -t $'\t' ../../../../../input-data/go/go_terms_class x > x2
+
+# Add column description
+head -1 summary_sig_go-leaf2.txt > x3
+
+# Add 'description' and 'class' column names
+cut -f1 --complement x3 > x4
+awk -v FS="\t" -v OFS="\t" '{print "GO.ID","description","class",$0}' x4 > x5
+
+cat x5 x2 > summary_sig_go-leaf2_INFO.txt
+
+# concatenating columns by line
+
+## orientation in column numbers
+head -1 summary_sig_go-leaf2_INFO.txt | tr '\t' '\n' | cat -n
+
+## concatenate by line
+#awk -v FS='\t' -v OFS='\t' '{print $1,$2,$3,$4" | "$5" | "$6" | "$7" | "$8" | "$9" | "$10" | "$11" | "$12" | "$13" | "$14" | "$15,$16" | "$17" | "$18" | "$19" | "$20" | "$21" | "$22" | "$23" | "$24" | "$25" | "$26" | "$27,$28" | "$29" | "$30" | "$31" | "$32" | "$33" | "$34" | "$35" | "$36" | "$37" | "$38" | "$39,$40" | "$41" | "$42" | "$43" | "$44" | "$45" | "$46" | "$47" | "$48" | "$49" | "$50" | "$51}' summary_sig_go_2day_INFO.txt > summary_sig_go_2day_INFO_byline.txt
+awk -v FS='\t' -v OFS='\t' '{print $1,$2,$3,$4" "$5" "$6" "$7" "$8" "$9" "$10" "$11" "$12" "$13" "$14" "$15,$16" "$17" "$18" "$19" "$20" "$21" "$22" "$23" "$24" "$25" "$26" "$27,$28" "$29" "$30" "$31" "$32" "$33" "$34" "$35" "$36" "$37" "$38" "$39,$40" "$41" "$42" "$43" "$44" "$45" "$46" "$47" "$48" "$49" "$50" "$51}' summary_sig_go-leaf2_INFO.txt > summary_sig_go-leaf2_INFO_byline.txt
+
+## Split by GO class
+# save header
+head -1 summary_sig_go-leaf2_INFO_byline.txt > xhead
+
+# extract GO classes
+awk -v FS='\t' -v OFS='\t' '$3~"biological_process"' summary_sig_go-leaf2_INFO_byline.txt > xbp
+awk -v FS='\t' -v OFS='\t' '$3~"cellular_component"' summary_sig_go-leaf2_INFO_byline.txt > xcc
+awk -v FS='\t' -v OFS='\t' '$3~"molecular_function"' summary_sig_go-leaf2_INFO_byline.txt > xmf
+
+# Add header to each file
+cat xhead xbp > summary_sig_go-leaf2_INFO_byline_bp.txt
+cat xhead xcc > summary_sig_go-leaf2_INFO_byline_cc.txt
+cat xhead xmf > summary_sig_go-leaf2_INFO_byline_mf.txt
+
+# Transform to more readable form
+tail -n +2 summary_sig_go-leaf2_INFO_byline_bp.txt | sed 's/ NA//g;s/\tNA/\t/g' | tr -s ' ' > bp_clean_leaf2.txt
+tail -n +2 summary_sig_go-leaf2_INFO_byline_cc.txt | sed 's/ NA//g;s/\tNA/\t/g' | tr -s ' ' > cc_clean_leaf2.txt
+tail -n +2 summary_sig_go-leaf2_INFO_byline_mf.txt | sed 's/ NA//g;s/\tNA/\t/g' | tr -s ' ' > mf_clean_leaf2.txt
+```
+
+## References
