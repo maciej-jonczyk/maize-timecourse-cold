@@ -19,11 +19,13 @@ We have four days, two of which are cold (c1, c2) and two of which are warm (r1,
 
 c1 - c2 - b - r1 - r2
 
-:::{.callout-note}
+---
+
 For *historical* reasons the following names will be used
 
 d1 - d2 - b - d3 - d4
-:::
+
+---
 
 In each day we have three samples: dawn, day, and dusk.
 
@@ -49,16 +51,7 @@ We have four days, two of which are cold (c1, c2) and two of which are warm (r1,
 
 c1 - c2 - b - r1 - r2
 
-:::{.callout-note}
-Here two regrowth points are compared to teh second (last) day of cold.
-For *historical* reasons the following names will be used
-
-d1 - d2 - b - d3 - d4
-:::
-
-In each day we have three samples: dawn, day, and dusk.
-
-c1[dawn, day, dusk] - c2[dawn, day, dusk] - b - r1[dawn, day, dusk] - r2[dawn, day, dusk]
+Here two regrowth points are compared to the second (last) day of cold.
 
 And here we want to compare:
 

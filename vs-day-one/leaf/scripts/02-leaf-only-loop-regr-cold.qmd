@@ -191,8 +191,12 @@ dds.f <- DESeq(dds.f, parallel = TRUE)
 # save workspace
 save.image("../rdata-saved/deseq_cold_leaf.RDa")
 
+# load("../rdata-saved/deseq_cold_leaf.RDa")
 # remove everything except for the DESeq2 object with results
 rm(list= ls()[!(ls() %in% c('dds.f'))])
+
+# genes forom the following object will be used as background in GO enrichemnt analysis
+save(dds.f, file="../rdata-saved/dds.f.RDa")
 ```
 
 ### Selecting interesting comparisons
@@ -316,5 +320,35 @@ to_save
 # saving
 save(list = to_save, file="../rdata-saved/sigs-leaf1_all.RDa")
 ```
+
+Following code can be customized to select genes with desired fold change for clustering.
+
+```{r FC0.5}
+# list of gene with minimal FC of 0.5 in either direction
+# to use in Mfuzz clustering
+
+load("../rdata-saved/sigs-leaf1_all.RDa")
+original_names <- grep("^[as].*sig$", ls(), value = TRUE)
+
+invisible(
+  lapply(original_names, function(name) {
+    obj <- get(name)
+
+    sig_name = paste0(name, "leaf_fc05")
+    
+    res <- obj[which(obj$padj < 0.05 & abs(obj$log2FoldChange) > 0.5), ]
+    assign(sig_name, res, envir = .GlobalEnv)
+  })
+)
+
+# select pattern
+to_save <- ls(pattern = "leaf_fc05$")
+# check
+to_save
+
+# saving
+save(list = to_save, file="../rdata-saved/sigs_leaf_fc05.RDa")
+```
+
 
 ## References

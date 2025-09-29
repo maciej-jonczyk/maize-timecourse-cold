@@ -1,7 +1,7 @@
 ---
 title: "GO analysis for expression changes in SAM in cold - ALL significant genes"
 format: html
-date: "2025-09-09"
+date: "2025-09-25"
 bibliography: ../../../refs-stat-anal.bib
 execute:
   fig-format: png
@@ -107,7 +107,7 @@ Load the data from the mfuzz analysis for given number of clusters and fuzziness
 
 # Change file appropriately
 # load("../rdata-saved/mfuzz_c8_m1.35_sam.RDa")
-load("../rdata-saved/mfuzz_c14_m1.3_sam.RDa")
+load("../rdata-saved/mfuzz_c10_m1.25_samALLsig.RDa")
 
 # genes_in_clusters object is needed
 ```
@@ -161,8 +161,11 @@ lapply(result.pwf, function(obj) plotPWF(obj, main="PWF"))
 
 # list of names
 # goseq
+
+## result tables
 result.goseq <- lapply(result.pwf, function(obj) goseq(obj, gene2cat=expr.go.cats, method="Wallenius", use_genes_without_cat=FALSE))
 
+## Adjust p-values with BH method, list of vectors with significant GOs
 result.bh <- lapply(result.goseq, function(obj) obj$category[p.adjust(obj$over_represented_pvalue, method="BH")<.05])
 
 ```
@@ -196,7 +199,18 @@ Total number of genes with GO annotation in a given cluster (after filtering for
 ```{r Study Total lapply}
 
 # count number of genes in each cluster -> Study Total for each cluster
-result.sumgo <- lapply(result.v, sum)
+# result.sumgo <- lapply(result.v, sum) # STARA WERSJA
+
+#######################
+# wektor dopuszczonych genów
+annotated_genes <- unique(expr.go.cats$db_object_symbol)
+
+# nowa lista – zachowujemy tylko te geny, które są w allowed_genes
+genes_in_clusters_GO <- lapply(genes_in_clusters, function(vec) vec[ vec %in% annotated_genes ])
+
+result.sumgo <- lapply(genes_in_clusters_GO, length)
+
+#######################
 
 # 1. Remove not needed column
 
@@ -254,6 +268,10 @@ result_clean <- Filter(function(x) {
 
 ```
 
+```{r save-for-09}
+save(result.goseq, result_clean, expr.go.cats, file="../rdata-saved/mfuzz_res_for09_samALLsig.RDa")
+```
+
 # GO trees
 
 ```{bash mkdir}
@@ -262,6 +280,23 @@ result_clean <- Filter(function(x) {
 rm -r ../results/go/graphs/clusters/
 
 mkdir -p ../results/go/graphs/clusters/all_cats/
+```
+
+```{r export-summary}
+# export summary tables (with proportion of genes from category) with significant GOs to files
+for (nm in names(result_clean)) {
+  vec <- result_clean[[nm]]
+
+  # file name – eg. "Klaster_13.txt"
+  fname <- paste0("../results/go/graphs/clusters/all_cats/", gsub(" ", "_", nm), "summary.txt")
+
+  write.table(vec,
+              file = fname,
+              col.names = TRUE,
+              row.names = FALSE,
+              quote = FALSE,
+              sep='\t')
+}
 ```
 
 ```{r export}
@@ -276,7 +311,8 @@ for (nm in names(result_clean)) {
               file = fname,
               col.names = FALSE,
               row.names = FALSE,
-              quote = FALSE)
+              quote = FALSE,
+              sep='\t')
 }
 ```
 
@@ -289,7 +325,7 @@ mkdir -p ../results/go/graphs/clusters/{bp,cc,mf}/
 
 cd ../results/go/graphs/clusters/all_cats/
 
-sample_names=($(ls *))
+sample_names=($(ls *[0-9].txt))
 
 for sample in ${sample_names[@]}
 do

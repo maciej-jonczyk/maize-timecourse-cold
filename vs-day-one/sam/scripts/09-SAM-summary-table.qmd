@@ -1,0 +1,228 @@
+---
+title: "Prepare file summarising clustering and GO-enrichment"
+format: html
+date: "2025-09-25"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+The aim of this code is to save `Mfuzz` results (genes and their membership to clusters) to table. Second aim is to construct summary table with `goseq` results and associated stats.
+
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/sam/scripts")
+```
+
+```{r packages}
+#| eval: false
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("Mfuzz")
+BiocManager::install("marray")
+BiocManager::install("limma")
+```
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+## Load data
+
+```{r load}
+# clustering results
+load("../rdata-saved/mfuzz_c10_m1.25_samALLsig.RDa")
+
+# goseq results
+load("../rdata-saved/mfuzz_res_for09_samALLsig.RDa")
+
+# # gene description
+anno = read.table("../../../../anno_fun_v45/anno-all-wide", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+colnames(anno) <- c("gene", "description")
+
+# GO categories + description
+go_anno <- read.table("../../../input-data/go/go_opis_gen_opis", header = FALSE, stringsAsFactors = FALSE, sep='\t', quote = "")
+colnames(go_anno) <- c("go_id", "go_term", "gene", "description")
+```
+
+## Cluster table and description
+
+```{r clusters}
+## All genes in clusters with membership values
+## 1.  Sprawdź, co w nim jest
+# str(c10_m1.25)
+
+## 2.  Pobierz wektor cluster (nazwany) i macierz membership
+cl_vec   <- c10_m1.25$cluster               # wektor długości 11936, nazwy = geny
+mem_mat  <- c10_m1.25$membership            # macierz 11936 × 10
+
+## 3.  Upewnij się, że nazwy wierszy obu obiektów są zgodne
+identical(names(cl_vec), rownames(mem_mat))
+
+## 4.  Stwórz data‑frame z dwoma zestawami kolumn
+df <- data.frame(
+  cluster = cl_vec,                     # pierwsza kolumna – numer klas
+  mem_mat,                              # kolejne 10 kolumn – membership
+  check.names = FALSE                   # pozwala na nazwę "1", "2", …
+)
+
+## 5.  (Opcjonalnie) nadaj sensowne nazwy kolumnom membership
+colnames(df)[2:ncol(df)] <- paste0("mem_", seq_len(ncol(mem_mat)))
+
+# add gene description
+
+## make column from rownames
+
+library(dplyr)
+
+df2 <- df |>
+  mutate(gene = rownames(df)) |>   # nowa kolumna "gene"
+  select(gene, everything())             # opcjonalnie przestaw kolejność
+
+## add gene description
+
+c10_m1.25_desc = left_join(
+  df2,
+  anno,
+  by = "gene",
+  copy = FALSE
+)
+
+write.table(c10_m1.25_desc, file="../results/go/sam-cluster-membership.txt", sep="\t", quote=FALSE, row.names=FALSE)
+
+```
+
+## GO summary table
+
+```{r GOs}
+# Extract Go description
+# 1) wyciągamy dwie kolumny z każdej ramki
+extracted <- lapply(result.goseq, function(df) df[, c("category", "ontology", "term")])
+
+# 2) łączymy wszystkie wyniki w jedną ramkę (doklejanie w pionie)
+cluster_gos <- do.call(rbind, extracted)
+# reset rownames
+rownames(cluster_gos) <- NULL
+# remove duplicates
+cluster_gos_uniq <- cluster_gos[!duplicated(cluster_gos), ]   # zachowuje pierwszy napotkany wiersz
+
+# how many GOs dont have "ontology" -> obsolete terms
+sum(is.na(cluster_gos_uniq$ontology))
+```
+
+```{r sig-GOs}
+# As the sam GOs can be enriched in one or several clusters join by "GO id" and "cluster number" is required. GO id alone is not sufficient.
+
+# 1) wyciągamy kolumnę i jednocześnie dodajemy nazwę źródła
+extracted2 <- lapply(names(result_clean), function(nm) {
+  data.frame(
+    source = as.integer(gsub("Klaster ", "", nm)),                     # nazwa elementu listy
+    category   = result_clean[[nm]]$category,        # wybrana kolumna
+    stringsAsFactors = FALSE
+  )
+})
+
+# 2) łączymy wszystkie podramki w jedną ramkę
+go_sigs_clusternos <- do.call(rbind, extracted2)
+
+# add column identyfying enrichment
+go_sigs_clusternos <- cbind(go_sigs_clusternos, enrichment = "yes")
+
+```
+
+```{r go-summary}
+library(dplyr)
+# Join everything
+# Join cluster summary (c10_m1.25_desc) with go_anno
+## result - GO annotation for all genes in clusters, regardless of membership = all input significant genes
+
+# From cluster-membership table and extract only genes with membership >=0.7
+# Wiersze, w których **przynajmniej jedna** z kolumn a‑d ≥ 0.7
+df_filt <- df2 %>%
+  filter(
+    if_any(starts_with("mem_"),
+           ~ . >= 0.7)              # warunek na każdą z nich
+  )
+
+# Join with GO annotation, adding GO IDs and at the same time filtering out categories without matching genes
+
+go_gene_sum1 = right_join(
+  expr.go.cats,
+  df_filt,
+  by = c("db_object_symbol" = "gene"),
+  copy = FALSE
+) |>
+  select(!(starts_with("mem_")))
+
+# check NAs
+sum(is.na(go_gene_sum1$term_accession))
+
+# Add description
+
+go_gene_sum2 = left_join(
+  go_gene_sum1,
+  cluster_gos_uniq,
+  by = c("term_accession" = "category"),
+  copy = FALSE
+) |>
+  relocate(cluster, .before = term_accession)
+
+# Add column identifying enrichment -> "yes"
+
+cluster_go_summary = left_join(
+  go_gene_sum2,
+  go_sigs_clusternos,
+  by = c("cluster" = "source",
+         "term_accession" = "category"),
+  copy = FALSE
+)
+
+# change NAs in enrichment column to "no"
+cluster_go_summary$enrichment[ is.na(cluster_go_summary$enrichment) ] <- "no"
+
+# save to file
+write.table(cluster_go_summary, file="../results/go/sam-cluster-go-summary.txt", sep="\t", quote=FALSE, row.names=FALSE)
+```
+
+```{bash num-genes-cluster}
+# Count number of genes in each cluster
+cd ../results/go/
+
+echo -e 'Num_genes\tCluster' > sam-cluster-num-genes.txt
+cut -f2 -d $'\t' sam-cluster-membership.txt | tail -n +2 | sort -n| uniq -c | sed -E 's/^ +//;s/ /\t/' >> sam-cluster-num-genes.txt
+
+```
+
+```{r num-genes07}
+# Count number of genes with membership >=0.7 in each cluster
+len_list <- lapply(genes_in_clusters, length)
+
+len07 <- lapply(names(len_list), function(nm) {
+  data.frame(
+    source = nm,                     # nazwa elementu listy
+    Num_genes   = len_list[[nm]],        # wybrana kolumna
+    stringsAsFactors = FALSE
+  )
+})
+
+# 2) łączymy wszystkie podramki w jedną ramkę
+len07table <- do.call(rbind, len07)
+
+# save to file
+write.table(len07table, file="../results/go/sam-cluster-num-genes-mem07.txt", sep="\t", quote=FALSE, row.names=FALSE)
+```
+
+## References

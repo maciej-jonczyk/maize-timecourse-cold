@@ -1,7 +1,7 @@
 ---
-title: "GO analysis for expression changes in SAM in cold - ALL significant genes"
+title: "GO analysis for expression changes in leaf in cold - ALL significant genes"
 format: html
-date: "2025-09-09"
+date: "2025-09-18"
 bibliography: ../../../refs-stat-anal.bib
 execute:
   fig-format: png
@@ -9,7 +9,8 @@ execute:
 ---
 
 :::{.callout-note}
-Only expressed genes as population
+- All maize genes as population
+- **Only** change of object in `load data` is needed
 :::
 
 Built with R version `r getRversion()`
@@ -107,7 +108,7 @@ Load the data from the mfuzz analysis for given number of clusters and fuzziness
 
 # Change file appropriately
 # load("../rdata-saved/mfuzz_c8_m1.35_sam.RDa")
-load("../rdata-saved/mfuzz_c14_m1.3_sam.RDa")
+load("../rdata-saved/mfuzz_c9_m1.3_leafALLsig.RDa")
 
 # genes_in_clusters object is needed
 ```
@@ -183,7 +184,7 @@ This number is retrieved from `expr.go.cats` object
 
 length(unique(expr.go.cats$db_object_symbol))
 
-# 30143
+# 27673
 
 ```
 
