@@ -9,7 +9,8 @@ execute:
 ---
 
 :::{.callout-note}
-Only expressed genes as population
+- Only expressed genes as population
+- **Only** change of object in `load data` is needed
 :::
 
 Built with R version `r getRversion()`
@@ -100,13 +101,12 @@ length(unique(expr.go.cats$db_object_symbol))
 rm(assayed.genes, length.vec, go.cats)
 ```
 
-Load the data from the mfuzz analysis for given number of clusters and fuzziness (computed in 07-SAM-only-mfuzz.qmd)
+Load the data from the mfuzz analysis for given number of clusters and fuzziness (computed in 07-SAM-only-mfuzzALLsig.qmd)
 
 ```{r load data}
 #| message: false
 
 # Change file appropriately
-# load("../rdata-saved/mfuzz_c8_m1.35_sam.RDa")
 load("../rdata-saved/mfuzz_c10_m1.25_samALLsig.RDa")
 
 # genes_in_clusters object is needed
@@ -317,7 +317,7 @@ for (nm in names(result_clean)) {
 ```
 
 ```{bash split cats}
-# split files into three categories: bp, cc, mf
+# split summary files by cluster and category
 
 rm -r ../results/go/graphs/clusters/{bp,cc,mf}/
 
@@ -336,7 +336,7 @@ done
 ```
 
 ```{bash rm empty}
-find ../results/go/graphs/ -type f -size 0c -delete
+find ../results/go/graphs/ -type f -empty -delete
 ```
 
 Using [goatools](https://github.com/tanghaibao/goatools/blob/main/doc/md/README_go_plot.md#six-different-colored-go-terms-without-relationships) [@klopfensteinGOATOOLSPythonLibrary2018]
@@ -353,7 +353,7 @@ sample_names=($(ls *))
 
 for sample in ${sample_names[@]}
 do
-go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/bp/${sample}.png
+go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/bp/${sample}.svg
 done
 
 cd ../cc
@@ -362,7 +362,7 @@ sample_names=($(ls *))
 
 for sample in ${sample_names[@]}
 do
-go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/cc/${sample}.png
+go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/cc/${sample}.svg
 done
 
 cd ../mf
@@ -371,7 +371,7 @@ sample_names=($(ls *))
 
 for sample in ${sample_names[@]}
 do
-go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/mf/${sample}.png
+go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/mf/${sample}.svg
 done
 ```
 

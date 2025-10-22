@@ -56,7 +56,7 @@ rm(list=ls())
 :::{.callout-note}
 ## For a given number of significant genes repeating entire code is not required
 
-Loading object created in `cleanup2` chunk is sufficient
+Loading object (created in `cleanup2`) in `check real` chunk is sufficient
 :::
 
 ## Create ExpressionSet from DESeq2 results
@@ -146,10 +146,10 @@ coldata.leaf=subset(coldata.srt, tissue=="leaf")
 # check
 dim(coldata.leaf)
 
-# vector of leafple names to keep - needed to select columns from count file
+# vector of sample names to keep - needed to select columns from count file
 keep.leaf=rownames(coldata.leaf)
 
-# check - only leafples named "s..." should remain
+# check - only samples named "l..." should remain
 keep.leaf
 length(keep.leaf)
 
@@ -248,10 +248,10 @@ rownames(phenoDataAve)= phenoDataAve$forAverage
 
 library(dplyr)
 
-pdata_sorted <- pData(phenoDataAve) %>%
+pdata_sorted <- pData(phenoDataAve) |>
   arrange(line, day, time)
 
-# i potem, jeśli chcesz przywrócić AnnotatedDataFrame:
+# recreate AnnotatedDataFrame:
 pData(phenoDataAve) <- pdata_sorted
 
 # sort counts columns
@@ -294,10 +294,10 @@ rownames(phenoDataAve)= phenoDataAve$forAverage
 
 library(dplyr)
 
-pdata_sorted <- pData(phenoDataAve) %>%
+pdata_sorted <- pData(phenoDataAve) |>
   arrange(line, day, time)
 
-# i potem, jeśli chcesz przywrócić AnnotatedDataFrame:
+# recreate AnnotatedDataFrame:
 pData(phenoDataAve) <- pdata_sorted
 
 # sort counts columns
@@ -311,7 +311,7 @@ vsd.eset.std.ave=ExpressionSet(assayData=average.std.srt, phenoData=phenoDataAve
 
 ### Saving and cleanup
 
-Correct order of operations (standardisation, averaging) will be decided later
+Correct order of operations (standardization, averaging) will be decided later
 
 ```{r cleanup2}
 # objects to keep
@@ -363,7 +363,7 @@ m1
 ## TAKEN FROM partcoeff DESCRIPTION IN MANUAL
 vsd.random=randomise(vsd.eset.ave.std)
 
-tmpR=partcoef(vsd.random, crange=seq(7, 30, 1), mrange=seq(1.05, 1.4, 0.05))
+tmpR=partcoef(vsd.random, crange=seq(7, 30, 1), mrange=seq(1.05, 1.45, 0.05))
 # tmpR=partcoef(vsd.random, crange=seq(16, 40, 1), mrange=seq(1.05, 2, 0.05))
 F <- tmpR[[1]];F.n <- tmpR[[2]];F.min <- tmpR[[3]]
 F > 1.01 * F.min
@@ -380,13 +380,14 @@ dev.off()
 
 ```{r check random}
 #| eval: false
-# RANODM
+# RANDOM
 
 ##############################
 # Adjust parameters manually #
 ##############################
 
-c_val <- 8 ; m_val <- 1 # produces uniform partitioning
+# c_val <- 8 ; m_val <- 1.05 # produces uniform partitioning
+c_val <- 10 ; m_val <- 1.05 # produces uniform partitioning
 
 # MFuzz analysis using variables above
 cl <- mfuzz(vsd.random, c = c_val, m = m_val)
@@ -403,81 +404,98 @@ dev.off()
 ### Automatic check for given combinations of c and m. Two methods.
 
 ```{r c auto}
-#| eval: false
-
 library(Mfuzz)
-load("../rdata-saved/vsd.eset.ave.std.leafALLsig.RDa")
+library(parallel)
 
+# -------------------------------------------------
+# 1. Funkcja wykonująca pojedynczy krok
+# -------------------------------------------------
+run_one_c <- function(m_val) {
+  # Nazwa pliku PDF (z dwoma miejscami po przecinku, żeby uniknąć np. "1.250")
+  filename <- sprintf("c_m%.2f.pdf", m_val)
 
-# m values for testing
-# m_vals <- seq(1.15, 1.45, by = 0.05)
-
-# complementary
-m_vals <- 1.45
-
-# list with results
-c_results <- list()
-
-for (m_val in m_vals) {
-  
-  # file name eg. "c_m1.15.pdf"
-  filename <- paste0("c_m", m_val, ".pdf")
-  
+  # Otwórz urządzenie graficzne, a na końcu na pewno je zamknij
   pdf(filename)
-  c_res <- cselection(vsd.eset.ave.std, m = m_val, crange=seq(7, 35, 1), repeats=10, visu=TRUE)
-  dev.off()
-  
-  # save result to list
-  key <- paste0("c", m_val)
-  c_results[[key]] <- c_res
+  on.exit(dev.off(), add = TRUE)   # gwarancja zamknięcia przy błędzie
+
+  # Wywołanie Twojej funkcji cselection
+  c_res <- cselection(vsd.eset.ave.std,
+                       m      = m_val,
+                       crange = seq(15, 35, 1),
+                       repeats = 10,
+                       visu   = TRUE)
+
+  # Zwróć listę z kluczem i wynikiem
+  list(key = sprintf("c%.2f", m_val), res = c_res)
 }
 
-# Suggested values
-#1# m = 1.35, c = 21
-#2# m=1.4, c = 13, 10?
+# -------------------------------------------------
+# 2. Przygotowanie wektora parametrów
+# -------------------------------------------------
+m_vals <- seq(1.25, 1.45, by = 0.05)
+
+# -------------------------------------------------
+# 3. Liczba rdzeni (zostawiamy jeden wolny)
+# -------------------------------------------------
+n_cores <- detectCores() - 1
+
+# -------------------------------------------------
+# 4. Równoległe wywołanie
+# -------------------------------------------------
+out_list <- mclapply(m_vals, run_one_c, mc.cores = n_cores)
+
+# -------------------------------------------------
+# 5. Budowa listy wyników w żądanym formacie
+# -------------------------------------------------
+c_results <- setNames(
+  lapply(out_list, `[[`, "res"),
+  sapply(out_list, `[[`, "key")
+)
+
+# Teraz np. c_results[["c1.30"]] zawiera wynik dla m = 1.30
 ```
 
 
 ```{r dmin auto}
-#| eval: false
+library(parallel)
 
-library(Mfuzz)
+# Twoja funkcja – opakowujemy całą logikę w jedną funkcję
+run_one_m <- function(m_val) {
+  # przygotuj nazwę pliku
+  filename <- sprintf("Dmin_m%.2f.pdf", m_val)
 
-# load("../rdata-saved/vsd.eset.ave.std.leafALLsig.RDa")
-
-# m values for testing
-# m_vals <- seq(1.15, 1.45, by = 0.05)
-
-# complementary
-m_vals <- 1.45
-
-# list with results
-dmin_results <- list()
-
-for (m_val in m_vals) {
-  
-  # file name eg. "Dmin_m1.15.pdf"
-  filename <- paste0("Dmin_m", m_val, ".pdf")
-  
+  # otwórz urządzenie graficzne, wykonaj obliczenia, zamknij je
   pdf(filename)
-  dmin_res <- Dmin(vsd.eset.ave.std, 
-                   m = m_val, 
-                   crange = seq(7, 40, 1), 
-                   repeats = 10, 
-                   visu = TRUE)
-  dev.off()
-  
-  # save result to list
-  key <- paste0("m", m_val)
-  dmin_results[[key]] <- dmin_res
+  on.exit(dev.off(), add = TRUE)   # gwarantuje zamknięcie nawet przy błędzie
+
+  # wywołanie Twojej funkcji Dmin (zakładam, że jest już załadowana)
+  dmin_res <- Dmin(vsd.eset.ave.std,
+                   m      = m_val,
+                   crange = seq(7, 40, 1),
+                   repeats = 10,
+                   visu   = TRUE)
+
+  # zwróć listę z wynikiem i kluczem
+  list(key = sprintf("m%.2f", m_val),
+       res = dmin_res)
 }
 
-## Suggested values
-#1# m = 1.15, c =11, 15?
-#2# m = 1.2, c = 14, 10?
-#3# m = 1.3, c = 14
-#4# m = 1.4, c=15
-#5# m = 1.45, c=11
+# wektor wartości m
+m_vals <- seq(1.15, 1.45, by = 0.05)
+
+# liczba rdzeni, które chcesz wykorzystać
+n_cores <- detectCores() - 1   # zostawiamy jeden wolny dla systemu
+
+# uruchomienie równoległe
+out_list <- mclapply(m_vals, run_one_m, mc.cores = n_cores)
+
+# przekształcenie do listy wyników w takiej samej formie jak w pętli for
+dmin_results <- setNames(
+  lapply(out_list, `[[`, "res"),
+  sapply(out_list, `[[`, "key")
+)
+
+# gotowe! dmin_results[[ "m1.15" ]] zawiera wynik dla m = 1.15 itd.
 ```
 
 ```{r check real}
@@ -488,8 +506,10 @@ library(Mfuzz)
 load("../rdata-saved/vsd.eset.ave.std.leafALLsig.RDa")
 # REMEMBER TO UN/COMMENT APPROPRIATE LINES BELOW
 
-c_vals = c(10, 14)
-m_vals = 1.2
+## Parameters chosen by PI (c = 13, m = 1.35) plus the best ffom c-selection and Dmin
+
+c_vals = c(10:14)
+m_vals = seq(1.2, 1.35, by = 0.05)
 
 source("../../sam/scripts/mfuzz.plot2_separate_lines.R") # modified plotting function, tailored to seprarate lines
 
@@ -509,57 +529,121 @@ for (c_val in c_vals) {
     key <- paste0("c", c_val, "_m", m_val)
     results[[key]] <- cl
     
+#     # dynamic naming of file
+#     filename <- paste0("cl", c_val, "_", m_val, ".pdf")
+# 
+#     # save plot
+#     pdf(filename)
+#     mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, mfrow = c(2,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
+#                 time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
+#     dev.off()
+#     
+#     # Plot for genes witn membership >= 0.7
+#     # dynamic naming of file
+#     filename07 <- paste0("cl", c_val, "_", m_val, "minmem07.pdf")
+# 
+#     # save plot
+#     pdf(filename07)
+#     mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, min.mem = 0.7, mfrow = c(2,1), x11 = FALSE, centre=TRUE, 
+#                    centre.col="black", centre.lwd=2, time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
+#     dev.off()
+  }
+}
+# 
+# # Joined with overlap analysis below
+# # list of clustering results:
+# # results[["c14_m1.20"]] <- cl14_120
+# 
+# # list to save overlap results
+# 
+# overlaps <- list()
+# 
+# # REMEMBER to change results_... object
+# 
+# for (key in names(results)) {
+#   # for (key in names(results_csel)) {
+#     
+#   # cl <- results_csel[[key]]
+#   cl <- results[[key]]
+#     
+#   # compute overlap
+#   ov <- overlap(cl)
+#   overlaps[[key]] <- ov
+#   
+#   # PDF file name eg. "c14_m1.20_overlap.pdf"
+#   filename <- paste0(key, "_overlap.pdf")
+#   
+#   pdf(filename)
+#   overlap.plot(cl, over = ov, thres = 0.05)
+#   dev.off()
+# }
+```
+
+### Plots in `eps` format
+
+Alternative code with custom Y axis is here: `plot-eps-y-lim.R`.
+
+<!-- #### -->
+```{r eps}
+# Code for generation of clusters for selected ("final") parameters and drawing plots in eps format
+
+library(Mfuzz)
+
+
+c_val = 13
+m_val = 1.35
+
+## Uncomment on new session
+load("../rdata-saved/vsd.eset.ave.std.leafALLsig.RDa")
+
+source("../../sam/scripts/mfuzz.plot2_separate_lines.R") # modified plotting function, tailored to seprarate lines
+
+    set.seed(1) # for reproducibility
+    
+    # clustering
+    cl <- mfuzz(vsd.eset.ave.std, c = c_val, m = m_val)
+    
     # dynamic naming of file
-    filename <- paste0("cl", c_val, "_", m_val, ".pdf")
+    
+for (cluster in 1:13) {
+    
+    filename <- paste0("cl", cluster, "_", c_val, "_", m_val, ".eps")
 
     # save plot
-    pdf(filename)
-    mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, mfrow = c(2,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
+    postscript(filename, horizontal = FALSE, onefile = TRUE, paper = "special", height = 3.8, width = 8)
+    mfuzz.plot2mod(vsd.eset.ave.std, single=cluster, cl = cl, mfrow = c(1,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
                 time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
     dev.off()
     
+}
+    
     # Plot for genes witn membership >= 0.7
     # dynamic naming of file
-    filename07 <- paste0("cl", c_val, "_", m_val, "minmem07.pdf")
+for (cluster in 1:13) {
+    
+    filename <- paste0("cl", cluster, "_", c_val, "_", m_val, "minmem07.eps")
 
     # save plot
-    pdf(filename07)
-    mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, min.mem = 0.7, mfrow = c(2,1), x11 = FALSE, centre=TRUE, 
-                   centre.col="black", centre.lwd=2, time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
+    postscript(filename, horizontal = FALSE, onefile = TRUE, paper = "special", height = 3.8, width = 8)
+    mfuzz.plot2mod(vsd.eset.ave.std, single=cluster, cl = cl, min.mem = 0.7, mfrow = c(1,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
+                time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
     dev.off()
-  }
-}
-
-```
-
-```{r overlaps}
-#| eval: false
-# list of clustering results:
-# results[["c14_m1.20"]] <- cl14_120
-
-# list to save overlap results
-overlaps <- list()
-
-# REMEMBER to change results_... object
-
-for (key in names(results)) {
-  # for (key in names(results_csel)) {
-    
-  # cl <- results_csel[[key]]
-  cl <- results[[key]]
-    
-  # compute overlap
+ 
+      # compute overlap
   ov <- overlap(cl)
-  overlaps[[key]] <- ov
   
   # PDF file name eg. "c14_m1.20_overlap.pdf"
-  filename <- paste0(key, "_overlap.pdf")
-  
-  pdf(filename)
+  filename <- paste0(c_val, "_", m_val, "ovlap.eps")
+
+  postscript(filename, horizontal = FALSE, onefile = TRUE, paper = "special", height = 8, width = 8)
   overlap.plot(cl, over = ov, thres = 0.05)
   dev.off()
+       
 }
+    
+
 ```
+<!-- #### -->
 
 ## Export results for chosen parameters
 
@@ -568,20 +652,18 @@ for (key in names(results)) {
 
 # Replace all occurrences of cluster name as needed
 
-c9_m1.3 <- results[["c9_m1.3"]]
+c13_m1.35 <- results[["c13_m1.35"]]
 
 
-genes_in_clusters <- lapply(1:ncol(c9_m1.3$membership), function(i) {
-  geny <- rownames(c9_m1.3$membership)[c9_m1.3$membership[, i] >= 0.7]
+genes_in_clusters <- lapply(1:ncol(c13_m1.35$membership), function(i) {
+  geny <- rownames(c13_m1.35$membership)[c13_m1.35$membership[, i] >= 0.7]
   return(geny)
 })
 
 # Name clusters
-names(genes_in_clusters) <- paste("Klaster", 1:ncol(c9_m1.3$membership))
+names(genes_in_clusters) <- paste("Klaster", 1:ncol(c13_m1.35$membership))
 
-save(c9_m1.3, genes_in_clusters, file="../rdata-saved/mfuzz_c9_m1.3_leafALLsig.RDa")
-# save(results_dmin, results_csel, file="../rdata-saved/mfuzz_different_options_sam.RDa")
-# save(results, file="../rdata-saved/mfuzz_different_options_leafALLsig.RDa")
+save(c13_m1.35, genes_in_clusters, file="../rdata-saved/mfuzz_c13_m1.35_leafALLsig.RDa")
 
 ```
 

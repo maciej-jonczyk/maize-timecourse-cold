@@ -61,3 +61,10 @@ r2[dawn, day, dusk] *vs* c2[dawn, day, dusk]
 So in all there are 9 time points and we have 6 comparisons.
 
 There are four inbred lines so the same analysis must be done for each.
+
+## Clustering and further analyses
+
+_07-*-ALL.qmd_, _08-*-ALL.qmd_ and further scripts use:
+
+- All significant genes for clustering
+- Expressed genes (surviving filtering and tested for DE) only as background for enrichment analysis

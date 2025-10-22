@@ -1,0 +1,385 @@
+---
+title: "Prepare network files for analysis in Cytoscape"
+format: html
+date: "2025-10-16"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+The aim of this code is to prepare files (clustering results and String network data [@szklarczykSTRINGDatabase20232023]) for Cytoscape analysis and visualization. Separately for each cluster.
+Using 0.7 membership cutoff.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/leaf/scripts")
+```
+
+```{r packages}
+#| eval: false
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("Mfuzz")
+BiocManager::install("marray")
+BiocManager::install("limma")
+```
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+## Load data
+
+`c13_m1.35` contains data for clusters.
+
+
+```{r load}
+load("../rdata-saved/mfuzz_c13_m1.35_leafALLsig.RDa")
+
+# # gene description
+anno = read.table("../../../../anno_fun_v45/anno-all-wide", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+colnames(anno) <- c("gene", "description")
+```
+
+## Prepare and export cluster data
+
+```{bash net-dir}
+rm -r ../results/network/
+mkdir ../results/network/
+```
+
+```{r membership-table}
+## All genes in clusters with membership values
+## 1.  Sprawdź, co w nim jest
+# str(c13_m1.35)
+
+## 2.  Pobierz wektor cluster (nazwany) i macierz membership
+cl_vec   <- c13_m1.35$cluster               # wektor długości 11936, nazwy = geny
+mem_mat  <- c13_m1.35$membership            # macierz 11936 × 10
+
+## 3.  Upewnij się, że nazwy wierszy obu obiektów są zgodne
+identical(names(cl_vec), rownames(mem_mat))
+
+## 4.  Stwórz data‑frame z dwoma zestawami kolumn
+df <- data.frame(
+  cluster = cl_vec,                     # pierwsza kolumna – numer klas
+  mem_mat,                              # kolejne 10 kolumn – membership
+  check.names = FALSE                   # pozwala na nazwę "1", "2", …
+)
+
+## 5.  (Opcjonalnie) nadaj sensowne nazwy kolumnom membership
+colnames(df)[2:ncol(df)] <- paste0("mem_", seq_len(ncol(mem_mat)))
+
+# add gene description
+
+## make column from rownames
+
+library(dplyr)
+
+df2 <- df |>
+  mutate(gene = rownames(df)) |>   # nowa kolumna "gene"
+  select(gene, everything())             # opcjonalnie przestaw kolejność
+
+## add gene description
+
+c13_m1.35_desc = left_join(
+  df2,
+  anno,
+  by = "gene",
+  copy = FALSE
+)
+
+# select only rows where any of the memberships is >= 0.7
+c13_m1.35_mem07 <- c13_m1.35_desc |>
+  filter(
+    if_any(starts_with("mem_"),
+           ~ . >= 0.7)              # warunek na każdą z nich
+  )
+
+
+# Extract max value from membership columns and retain it in new column
+# 1 Wybieramy kolumny zaczynające się od "mem_"
+mem_cols <- grep("^mem_", names(c13_m1.35_mem07), value = TRUE)
+
+# 2 Obliczamy maksimum w każdym wierszu (ignorujemy NA)
+max_mem <- apply(c13_m1.35_mem07[mem_cols], 1, max, na.rm = TRUE)
+
+# 3 Tworzymy nową ramkę z wybranymi kolumnami + maksymalną wartością
+c13_m1.35_maxmem <- data.frame(
+  gene        = c13_m1.35_mem07$gene,
+  cluster     = c13_m1.35_mem07$cluster,
+  max_mem     = max_mem,
+  description = c13_m1.35_mem07$description,
+  stringsAsFactors = FALSE
+)
+
+# write.table(c13_m1.35_maxmem, file="../results/network/c13_m1.35_maxmem", sep="\t", quote=FALSE, row.names=FALSE)
+
+# Table will be joined with String network data by gene name so it must be sorted
+
+c13_m1.35_sort <- c13_m1.35_maxmem[order(c13_m1.35_maxmem$gene), ]
+
+write.table(c13_m1.35_sort, file="../results/network/c13_m1.35_sort", sep="\t", quote=FALSE, row.names=FALSE)
+
+```
+
+## Prepare UniProt-NAM mapping with network data - need to be done only once!
+
+All clusters are processed as one file. Split by cluster will be done at the end.
+
+Files needed:
+- 4577.protein.links.full.v12.0.txt.gz downloaded from String database
+https://string-db.org/cgi/download?sessionId=bqBkc8wRFKRG
+- NAM - UniProt mapping Zea_mays.Zm-B73-REFERENCE-NAM-5.0.57.uniprot.tsv.gz
+https://ftp.ebi.ac.uk/ensemblgenomes/pub/release-57/plants/tsv/zea_mays/Zea_mays.Zm-B73-REFERENCE-NAM-5.0.57.uniprot.tsv.gz
+- cluster data
+
+```{bash clean-network}
+##### This step must be done only once! #####
+
+# removing unnecessary prefix from UniProts in whole network
+## This step uses source file stored outside project directory tree and temporarily use home dir
+zcat /media/mj/ANTIX-LIVE/siec-ala-string/4577.protein.links.full.v12.0.txt.gz | sed 's/4577\.//g' > ~/full-network
+pigz --best ~/full-network
+mv ~/full-network.gz ../../../input-data/networks/
+
+```
+
+```{bash cluster-table}
+##### This step must be done only once! #####
+
+cd ../../../input-data/networks/
+## Following code uses source file stored outside project directory tree and temporarily use home dir
+
+# list of UniProt (UP) IDs in network
+# file is space-separated
+cut -f1,2 -d" " <(zcat full-network.gz) > ~/x
+tail -n +2 ~/x | tr ' ' '\n' > ~/x2
+
+# check
+wc -l ~/x2
+# 46548750 x2
+expr 23274375 \* 2
+# 46548750
+
+# selecting unique UPs
+sort -u ~/x2 > uniq-ups-string
+wc -l uniq-ups-string
+# 34009 uniq-ups-string
+
+```
+
+```{bash uniprot-nam}
+##### This step must be done only once! #####
+
+cd ../../../input-data/networks/
+
+# 2. Selecting UPs present in network from file mapping UP-NAM
+# mapping file
+zcat /media/mj/ANTIX-LIVE/anno_fun_v45/Zea_mays.Zm-B73-REFERENCE-NAM-5.0.57.uniprot.tsv.gz | sort -k4,4 -t $'\t' > ~/xnamuniprotsrt
+# checking
+head -n1 ~/xnamuniprotsrt | cat -A
+# file is TAB-separated
+join -1 1 -2 4 -t $'\t' uniq-ups-string ~/xnamuniprotsrt > ~/xnam-string
+# Selecting could be done also with grep but it selects also splicing forms, ie. UniProt IDs with subscript -1 or -2
+
+# 3. Choosing the best UP for each NAM
+# checking column numbers
+head -n1 ~/xnam-string | tr '\t' '\n' | cat -n
+# setting locale to ensure proper sorting
+LC_ALL=C sort -k2,2 -k7,7rn -t $'\t' ~/xnam-string | sort -u -k2,2 -t $'\t' > best-nam-string
+# checking file
+wc -l best-nam-string
+# 27425
+
+# retrieve only IDs
+cut -f1,2 -d $'\t' best-nam-string  > best-nam-string-ids
+```
+
+## Join cluster data with UP-NAM mapping
+
+```{bash join-cluster-nam}
+cd ../results/network/
+
+# join and sort by UP
+join -1 2 -2 1 -t $'\t' ../../../../input-data/networks/best-nam-string-ids c13_m1.35_sort | sort -k2,2 -t $'\t'> c13_UP_srt
+
+# checks - NAMs are unique but UP no
+wc -l c10_UP_srt
+# 3186
+cut -f1 -d $'\t' c10_UP_srt | sort -u | wc -l
+# 3186
+cut -f2 -d $'\t' c10_UP_srt | sort -u | wc -l
+# 3167 # some UPs map to multiple NAMs
+cut -f2,3 -d $'\t' c10_UP_srt | sort -u | wc -l
+# 3176 # this is less pronounced, when both UPs and clusters are considered
+# Still it will require filtering or concatenation
+```
+
+## Add network data
+
+```{bash join-cluster-network}
+cd ../results/network/
+
+# 5. Subsetting STRING 12 network to include only interactions for UniProts in xok... files
+# sorting network data by UPs
+sort -k1,1 -t" " <(zcat ../../../../input-data/networks/full-network.gz) | tr ' ' '\t' > ~/xfull-srt
+
+# join 
+join -1 2 -2 1 -t $'\t' c10_UP_srt ~/xfull-srt > ~/xcl-net
+
+# rearrange columns
+awk -v FS='\t' -v OFS='\t' '{print $1,$6,$0}' ~/xcl-net | cut --complement -f3,8 -d $'\t' > clall-net
+
+# how many interactions for each cluster
+cut -f4 -d $'\t' clall-net | sort | uniq -c
+#  154279 1
+#  155718 10
+#  151107 11
+#  152651 12
+#  145610 13
+#  125115 2
+#  125300 3
+#  183586 4
+#  133756 5
+#  276476 6
+#  109838 7
+#  463127 8
+#  467265 9
+
+# It is way to many - filtering on score
+awk -v FS='\t' -v OFS='\t' '$NF>=400' clall-net > clall-net400
+
+# check how many interactions for each cluster
+cut -f4 -d $'\t' clall-net400 | sort | uniq -c
+#  24906 1
+#  21564 10
+#  23054 11
+#  22238 12
+#  26855 13
+#  20769 2
+#  18020 3
+#  20763 4
+#  18380 5
+#  46356 6
+#  14991 7
+# 128057 8
+#  68805 9
+
+
+# more stringent filtering
+awk -v FS='\t' -v OFS='\t' '$NF>=700' clall-net400 > clall-net700
+
+# check
+cut -f4 -d $'\t' clall-net700 | sort | uniq -c
+#   5546 1
+#   4446 10
+#   4422 11
+#   5041 12
+#   8353 13
+#   5420 2
+#   3171 3
+#   3170 4
+#   3594 5
+#  12851 6
+#   2510 7
+#  59701 8
+#  12611 9
+```
+
+## Split by cluster
+
+```{bash split}
+cd ../results/network/
+
+# using 400 score cutoff
+awk -v FS='\t' -v OFS='\t' '{ print > "cluster_"$4"_400.txt" }' clall-net400
+
+# add header
+
+for i in {1..10}; do
+  echo -e "protein1\tprotein2\tgene\tcluster\tmembership\tdescription\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" | cat - cluster_${i}_400.txt > temp && mv temp cluster_${i}_400.txt ;
+done
+```
+
+## Subset networks by interesting GO-categories
+
+Using descriptions related to transcription regulation.
+
+```{bash tran-reg}
+# Retrieval of Go categories containing string 'transc'
+
+## Need to be done only once ##
+## grep -i 'transc' ../../../input-data/go/go.obo | grep -o 'GO:.*' | grep ' ! ' | sort -u > ../results/network/transc-go
+##
+
+# Next - manual selection of interesting categories
+# output file is transc-go-selected
+
+# For now only 'GO:0003700 ! DNA-binding transcription factor activity' is used
+# extract genes annotated with this GO term, entire go.cats file is used (without filtering for 'expressed genes') but it not harm, anyways not expressed genes will not be selected from clusters as they contain only expressed genes
+
+## Need to be done only once ##
+## grep 'GO:0003700' ../../../input-data/go/go.cats | cut -f1 -d $'\t' | sort -u > ../../../input-data/go/genes-tran-reg
+##
+
+cd ../results/network/
+for i in {1..10}; do
+  grep -f  ../../../../input-data/go/genes-tran-reg cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_tran-reg.txt;
+done
+```
+
+## Change GO annotation file from NAM to UP
+
+This will not be used - new GO-enrichment in networks doesn't make sense
+
+```{bash GO-anno}
+# transform best-nam-string-ids to sed file
+cd ../../../input-data/networks/
+
+awk -v FS='\t' -v OFS='\t' '{print "s/"$2"/"$1"/g"}' best-nam-string-ids > nam-up-dict
+
+# uses file outside project directory
+sed -f nam-up-dict /media/mj/ANTIX-LIVE/GO/3.1_B73v5.MaizeGDB.CLEANED.gaf > B73v5_UniProt.gaf
+
+# Alternative annotation from UniProt
+wget https://ftp.ebi.ac.uk/pub/databases/GO/goa/proteomes/272950.Z_mays_1.goa
+
+## stats
+## how many annotatons
+tail -n +5 272950.Z_mays_1.goa | cut -f2 | wc -l
+# 291387
+## how many unique genes
+tail -n +5 272950.Z_mays_1.goa | cut -f2 | sort -u | wc -l
+# 44753
+
+# One more alternative annotation - from NCBI
+## In the same dir gene descriptions could be potentially found
+## like: *feature_table*, *_genomic.gff, *genomic.gtf
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/902/167/145/GCF_902167145.1_Zm-B73-REFERENCE-NAM-5.0/GCF_902167145.1-RS_2025_02_gene_ontology.gaf.gz
+
+## stats
+## how many annotations
+zless GCF_902167145.1-RS_2025_02_gene_ontology.gaf.gz | tail -n +10 | cut -f2 | wc -l
+# 81166
+## how many unique genes
+zless GCF_902167145.1-RS_2025_02_gene_ontology.gaf.gz | tail -n +10 | cut -f2 | sort -u | wc -l
+# 23387
+
+# -> annotation from UniProt looks better. Also it has UP IDs while file from NCBI has geneindex (?) IDs
+```
+
+## References

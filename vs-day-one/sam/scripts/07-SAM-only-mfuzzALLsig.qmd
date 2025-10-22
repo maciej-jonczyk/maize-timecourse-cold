@@ -52,9 +52,15 @@ BiocManager::install("limma")
 rm(list=ls())
 ```
 
+:::{.callout-note}
+## For a given number of significant genes repeating entire code is not required
+
+Loading object (created in `cleanup2`) in `check real` chunk is sufficient
+:::
+
 ## Create ExpressionSet from DESeq2 results
 
-### Load significant genes
+### Load ALL significant genes
 
 ```{r load}
 load("../rdata-saved/sigs_all_SAM1.RDa")
@@ -241,10 +247,10 @@ rownames(phenoDataAve)= phenoDataAve$forAverage
 
 library(dplyr)
 
-pdata_sorted <- pData(phenoDataAve) %>%
+pdata_sorted <- pData(phenoDataAve) |>
   arrange(line, day, time)
 
-# i potem, jeśli chcesz przywrócić AnnotatedDataFrame:
+# recreate AnnotatedDataFrame:
 pData(phenoDataAve) <- pdata_sorted
 
 # sort counts columns
@@ -287,10 +293,10 @@ rownames(phenoDataAve)= phenoDataAve$forAverage
 
 library(dplyr)
 
-pdata_sorted <- pData(phenoDataAve) %>%
+pdata_sorted <- pData(phenoDataAve) |>
   arrange(line, day, time)
 
-# i potem, jeśli chcesz przywrócić AnnotatedDataFrame:
+# recreate AnnotatedDataFrame:
 pData(phenoDataAve) <- pdata_sorted
 
 # sort counts columns
@@ -354,12 +360,12 @@ m1
 ## TAKEN FROM partcoeff DESCRIPTION IN MANUAL
 vsd.random=randomise(vsd.eset.ave.std)
 
-tmpR=partcoef(vsd.random, crange=seq(7, 30, 1),mrange=seq(1.05, 1.45, 0.05))
-# tmpR=partcoef(vsd.random, crange=seq(16, 40, 1), mrange=seq(1.05, 2, 0.05))
+tmpR=partcoef(vsd.random, crange=seq(7, 30, 1), mrange=seq(1.05, 1.45, 0.05))
+
 F <- tmpR[[1]];F.n <- tmpR[[2]];F.min <- tmpR[[3]]
 F > 1.01 * F.min
 
-# it seems that value given by mestimate is good for small number of clusters but too low for 11 and >=13 where minimum m = 1.1 should be used
+# it seems that value given by mestimate is too small, at least 1.1 must be used
 
 library(Mfuzz)
 # draw and save legend (uses modified function as this from package not work)
@@ -376,9 +382,9 @@ dev.off()
 # Adjust parameters manually #
 ##############################
 
-# c_val <- 4 ; m_val <- 1.05 # Non uniform partition (too low m value)
+# c_val <- 4 ; m_val <- 1.05 # uniform partitioning
 # c_val <- 8 ; m_val <- 1.05 # Non uniform partition (too low m value)
-# c_val <- 16 ; m_val <- 1.05 # Non uniform partition (too low m value)
+# c_val <- 16 ; m_val <- 1.05 # Non uniform partition (too low m value) but empty cluster present
 # c_val <- 4 ; m_val <- 1.15 # produces uniform partitioning
 # c_val <- 8 ; m_val <- 1.15 # produces uniform partitioning
 # c_val <- 16 ; m_val <- 1.15 # produces uniform partitioning
@@ -451,6 +457,7 @@ c_results <- setNames(
 
 
 ```{r dmin auto}
+library(Mfuzz)
 library(parallel)
 
 # Twoja funkcja – opakowujemy całą logikę w jedną funkcję
@@ -476,6 +483,7 @@ run_one_m <- function(m_val) {
 
 # wektor wartości m
 m_vals <- seq(1.15, 1.45, by = 0.05)
+# m_vals <- 1.45
 
 # liczba rdzeni, które chcesz wykorzystać
 n_cores <- detectCores() - 1   # zostawiamy jeden wolny dla systemu
@@ -493,37 +501,20 @@ dmin_results <- setNames(
 ```
 
 ```{r check real}
-#REAL
+## Code for testing various values of c and m in one go ##
+# For this purpose uncomment plotting part
 
 library(Mfuzz)
 
-# REMEMBER TO UN/COMMENT APPROPRIATE LINES BELOW
-
-# c_vals = c(8, 11) # Dmin
-# m_vals = 1.15 # Dmin
-
-# c_vals = c(8, 12) # Dmin
-# m_vals = 1.2 # Dmin
-
-# c_vals = c(10, 12, 13) # Dmin
-# m_vals = c(1.25, 1.3) # Dmin
-
-# c_vals = c(12, 24) # Dmin
-# m_vals = 1.35 # Dmin
-
-# c_vals = c(13, 17, 26) # Dmin, 17 from cselection
-# m_vals = 1.4 # Dmin
-
-# c_vals = c(13, 18) # Dmin
-# m_vals = 1.45 # Dmin
+## Parameters chosen by PI
 
 c_vals = 10 # Dmin
-m_vals = c(1.25, 1.3) # Dmin
+m_vals = 1.25 # Dmin
 
 
 ## Uncomment on new session
 # load("../rdata-saved/vsd.eset.ave.std.samALLsig.RDa")
-source("mfuzz.plot2_separate_lines.R") # modified plotting function, tailored to seprarate lines
+source("mfuzz.plot2_separate_lines.R") # modified plotting function, tailored to separate lines
 
 # lista wyników
 results <- list()
@@ -531,79 +522,140 @@ results <- list()
 # loop for given combinations of c and m
 for (c_val in c_vals) {
   for (m_val in m_vals) {
-    
+
+    set.seed(1) # for reproducibility
+
+    # clustering
+    cl <- mfuzz(vsd.eset.ave.std, c = c_val, m = m_val)
+
+    # save results to list
+    key <- paste0("c", c_val, "_m", m_val)
+    results[[key]] <- cl
+
+    # # dynamic naming of file
+    # filename <- paste0("cl", c_val, "_", m_val, ".pdf")
+    # 
+    # # save plot
+    # pdf(filename)
+    # mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, mfrow = c(2,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
+    #             time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
+    # dev.off()
+    # 
+    # # Plot for genes witn membership >= 0.7
+    # # dynamic naming of file
+    # filename07 <- paste0("cl", c_val, "_", m_val, "minmem07.pdf")
+    # 
+    # # save plot
+    # pdf(filename07)
+    # mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, min.mem = 0.7, mfrow = c(2,1), x11 = FALSE, centre=TRUE,
+    #                centre.col="black", centre.lwd=2, time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
+    # dev.off()
+  }
+}
+# 
+# 
+# # Joined with overlap analysis below
+# 
+# # list of clustering results:
+# # results[["c14_m1.20"]] <- cl14_120
+# 
+# # list to save overlap results
+# overlaps <- list()
+# 
+# 
+# for (key in names(results)) {
+#   # for (key in names(results_csel)) {
+#     
+#   # cl <- results_csel[[key]]
+#   cl <- results[[key]]
+#     
+#   # compute overlap
+#   ov <- overlap(cl)
+#   overlaps[[key]] <- ov
+#   
+#   # PDF file name eg. "c14_m1.20_overlap.pdf"
+#   filename <- paste0(key, "_overlap.pdf")
+#   
+#   pdf(filename)
+#   overlap.plot(cl, over = ov, thres = 0.05)
+#   dev.off()
+# }
+```
+
+### Plots in `eps` format
+
+<!-- #### -->
+```{r eps}
+# Code for generation of clusters for selected ("final") parameters and drawing plots in eps format
+
+library(Mfuzz)
+
+
+c_val = 10
+m_val = 1.25
+
+## Uncomment on new session
+load("../rdata-saved/vsd.eset.ave.std.samALLsig.RDa")
+
+source("mfuzz.plot2_separate_lines.R") # modified plotting function, tailored to seprarate lines
+
     set.seed(1) # for reproducibility
     
     # clustering
     cl <- mfuzz(vsd.eset.ave.std, c = c_val, m = m_val)
     
-    # save results to list
-    key <- paste0("c", c_val, "_m", m_val)
-    results[[key]] <- cl
-    
     # dynamic naming of file
-    filename <- paste0("cl", c_val, "_", m_val, ".pdf")
+    
+for (cluster in 1:10) {
+    
+    filename <- paste0("cl", cluster, "_", c_val, "_", m_val, ".eps")
 
     # save plot
-    pdf(filename)
-    mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, mfrow = c(2,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
+    postscript(filename, horizontal = FALSE, onefile = TRUE, paper = "special", height = 3.8, width = 8)
+    mfuzz.plot2mod(vsd.eset.ave.std, single=cluster, cl = cl, mfrow = c(1,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
                 time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
     dev.off()
     
+}
+    
     # Plot for genes witn membership >= 0.7
     # dynamic naming of file
-    filename07 <- paste0("cl", c_val, "_", m_val, "minmem07.pdf")
+for (cluster in 1:10) {
+    
+    filename <- paste0("cl", cluster, "_", c_val, "_", m_val, "minmem07.eps")
 
     # save plot
-    pdf(filename07)
-    mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, min.mem = 0.7, mfrow = c(2,1), x11 = FALSE, centre=TRUE, 
-                   centre.col="black", centre.lwd=2, time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
+    postscript(filename, horizontal = FALSE, onefile = TRUE, paper = "special", height = 3.8, width = 8)
+    mfuzz.plot2mod(vsd.eset.ave.std, single=cluster, cl = cl, min.mem = 0.7, mfrow = c(1,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
+                time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
     dev.off()
-  }
-}
-
-# results_csel = results # from cselection
-
-results_dmin = results # from Dmin
-
-# Joined with overlap analysis below
-
-# list of clustering results:
-# results[["c14_m1.20"]] <- cl14_120
-
-# list to save overlap results
-overlaps <- list()
-
-# REMEMBER to change results_... object
-
-for (key in names(results_dmin)) {
-  # for (key in names(results_csel)) {
     
-  # cl <- results_csel[[key]]
-  cl <- results_dmin[[key]]
     
   # compute overlap
   ov <- overlap(cl)
-  overlaps[[key]] <- ov
   
   # PDF file name eg. "c14_m1.20_overlap.pdf"
-  filename <- paste0(key, "_overlap.pdf")
-  
-  pdf(filename)
+  filename <- paste0(c_val, "_", m_val, "ovlap.eps")
+
+  postscript(filename, horizontal = FALSE, onefile = TRUE, paper = "special", height = 8, width = 8)
   overlap.plot(cl, over = ov, thres = 0.05)
   dev.off()
+    
 }
+    
+
 ```
+<!-- #### -->
 
 ## Export results for chosen parameters
 
 ```{r selected}
+# Use results from 'r check real' chunk
 
-# c10_m1.3 <- results_dmin[["c10_m1.3"]]
-# Replace all occurrences of cluster name as needed
+## Replace all occurrences of cluster name as needed ##
 
 # all genes in clusters, without membership filtering
-c10_m1.25 <- results_dmin[["c10_m1.25"]]
+c10_m1.25 <- results[["c10_m1.25"]]
 
 # this file contains only genes with mem >=0.7
 genes_in_clusters <- lapply(1:ncol(c10_m1.25$membership), function(i) {

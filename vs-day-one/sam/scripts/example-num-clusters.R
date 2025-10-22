@@ -1,4 +1,6 @@
+library(Mfuzz)
 data(yeast)
+
 # Data pre-processing
 yeastF <- filter.NA(yeast)
 yeastF <- fill.NA(yeastF)

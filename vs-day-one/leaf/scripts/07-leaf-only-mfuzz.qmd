@@ -56,7 +56,7 @@ rm(list=ls())
 :::{.callout-note}
 ## Repeating entire code is not required
 
-Loading object created in `cleanup2` chunk is sufficient
+Loading object (created in `cleanup2`) in `check real` chunk is sufficient
 :::
 
 ## Create ExpressionSet from DESeq2 results

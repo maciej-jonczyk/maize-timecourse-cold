@@ -9,7 +9,7 @@ execute:
 ---
 
 :::{.callout-note}
-- All maize genes as population
+- Only expressed genes as population
 - **Only** change of object in `load data` is needed
 :::
 
@@ -101,14 +101,13 @@ length(unique(expr.go.cats$db_object_symbol))
 rm(assayed.genes, length.vec, go.cats)
 ```
 
-Load the data from the mfuzz analysis for given number of clusters and fuzziness (computed in 07-SAM-only-mfuzz.qmd)
+Load the data from the mfuzz analysis for given number of clusters and fuzziness (computed in 07-leaf-only-mfuzzALLsig.qmd)
 
 ```{r load data}
 #| message: false
 
 # Change file appropriately
-# load("../rdata-saved/mfuzz_c8_m1.35_sam.RDa")
-load("../rdata-saved/mfuzz_c9_m1.3_leafALLsig.RDa")
+load("../rdata-saved/mfuzz_c13_m1.35_leafALLsig.RDa")
 
 # genes_in_clusters object is needed
 ```
@@ -162,8 +161,11 @@ lapply(result.pwf, function(obj) plotPWF(obj, main="PWF"))
 
 # list of names
 # goseq
+
+## result tables
 result.goseq <- lapply(result.pwf, function(obj) goseq(obj, gene2cat=expr.go.cats, method="Wallenius", use_genes_without_cat=FALSE))
 
+## Adjust p-values with BH method, list of vectors with significant GOs
 result.bh <- lapply(result.goseq, function(obj) obj$category[p.adjust(obj$over_represented_pvalue, method="BH")<.05])
 
 ```
@@ -197,7 +199,18 @@ Total number of genes with GO annotation in a given cluster (after filtering for
 ```{r Study Total lapply}
 
 # count number of genes in each cluster -> Study Total for each cluster
-result.sumgo <- lapply(result.v, sum)
+# result.sumgo <- lapply(result.v, sum) # STARA WERSJA
+
+#######################
+# wektor dopuszczonych genów
+annotated_genes <- unique(expr.go.cats$db_object_symbol)
+
+# nowa lista – zachowujemy tylko te geny, które są w allowed_genes
+genes_in_clusters_GO <- lapply(genes_in_clusters, function(vec) vec[ vec %in% annotated_genes ])
+
+result.sumgo <- lapply(genes_in_clusters_GO, length)
+
+#######################
 
 # 1. Remove not needed column
 
@@ -255,6 +268,10 @@ result_clean <- Filter(function(x) {
 
 ```
 
+```{r save-for-09}
+save(result.goseq, result_clean, expr.go.cats, file="../rdata-saved/mfuzz_res_for09_leafALLsig.RDa")
+```
+
 # GO trees
 
 ```{bash mkdir}
@@ -263,6 +280,23 @@ result_clean <- Filter(function(x) {
 rm -r ../results/go/graphs/clusters/
 
 mkdir -p ../results/go/graphs/clusters/all_cats/
+```
+
+```{r export-summary}
+# export summary tables (with proportion of genes from category) with significant GOs to files
+for (nm in names(result_clean)) {
+  vec <- result_clean[[nm]]
+
+  # file name – eg. "Klaster_13.txt"
+  fname <- paste0("../results/go/graphs/clusters/all_cats/", gsub(" ", "_", nm), "summary.txt")
+
+  write.table(vec,
+              file = fname,
+              col.names = TRUE,
+              row.names = FALSE,
+              quote = FALSE,
+              sep='\t')
+}
 ```
 
 ```{r export}
@@ -277,12 +311,13 @@ for (nm in names(result_clean)) {
               file = fname,
               col.names = FALSE,
               row.names = FALSE,
-              quote = FALSE)
+              quote = FALSE,
+              sep='\t')
 }
 ```
 
 ```{bash split cats}
-# split files into three categories: bp, cc, mf
+# split summary files by cluster and category
 
 rm -r ../results/go/graphs/clusters/{bp,cc,mf}/
 
@@ -290,7 +325,7 @@ mkdir -p ../results/go/graphs/clusters/{bp,cc,mf}/
 
 cd ../results/go/graphs/clusters/all_cats/
 
-sample_names=($(ls *))
+sample_names=($(ls *[0-9].txt))
 
 for sample in ${sample_names[@]}
 do
@@ -301,7 +336,7 @@ done
 ```
 
 ```{bash rm empty}
-find ../results/go/graphs/ -type f -size 0c -delete
+find ../results/go/graphs/ -type f -empty -delete
 ```
 
 Using [goatools](https://github.com/tanghaibao/goatools/blob/main/doc/md/README_go_plot.md#six-different-colored-go-terms-without-relationships) [@klopfensteinGOATOOLSPythonLibrary2018]
@@ -318,7 +353,7 @@ sample_names=($(ls *))
 
 for sample in ${sample_names[@]}
 do
-go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/bp/${sample}.png
+go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/bp/${sample}.svg
 done
 
 cd ../cc
@@ -327,7 +362,7 @@ sample_names=($(ls *))
 
 for sample in ${sample_names[@]}
 do
-go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/cc/${sample}.png
+go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/cc/${sample}.svg
 done
 
 cd ../mf
@@ -336,7 +371,7 @@ sample_names=($(ls *))
 
 for sample in ${sample_names[@]}
 do
-go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/mf/${sample}.png
+go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/mf/${sample}.svg
 done
 ```
 
