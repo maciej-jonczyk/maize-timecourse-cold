@@ -342,10 +342,15 @@ find ../results/go/graphs/ -type f -empty -delete
 Using [goatools](https://github.com/tanghaibao/goatools/blob/main/doc/md/README_go_plot.md#six-different-colored-go-terms-without-relationships) [@klopfensteinGOATOOLSPythonLibrary2018]
 
 ```{bash draw}
+# PI prefers png, so SVG and PDF versions are commented-out
 
-rm -r ../results/go/graphs/clusters/svg/{bp,cc,mf}/
+#SVG # rm -r ../results/go/graphs/clusters/svg/{bp,cc,mf}/
+#PDF # rm -r ../results/go/graphs/clusters/pdf/{bp,cc,mf}/
+rm -r ../results/go/graphs/clusters/png/{bp,cc,mf}/
 
-mkdir -p ../results/go/graphs/clusters/svg/{bp,cc,mf}/
+#SVG # mkdir -p ../results/go/graphs/clusters/svg/{bp,cc,mf}/
+#PDF # mkdir -p ../results/go/graphs/clusters/pdf/{bp,cc,mf}/
+mkdir -p ../results/go/graphs/clusters/png/{bp,cc,mf}/
 
 cd ../results/go/graphs/clusters/bp/
 
@@ -353,7 +358,9 @@ sample_names=($(ls *))
 
 for sample in ${sample_names[@]}
 do
-go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/bp/${sample}.svg
+#SVG #  go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/bp/${sample}.svg
+#PDF # go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../pdf/bp/${sample}.pdf
+go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../png/bp/${sample}.png
 done
 
 cd ../cc
@@ -362,7 +369,9 @@ sample_names=($(ls *))
 
 for sample in ${sample_names[@]}
 do
-go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/cc/${sample}.svg
+#SVG # go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/cc/${sample}.svg
+#PDF # go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../pdf/cc/${sample}.pdf
+go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../png/cc/${sample}.png
 done
 
 cd ../mf
@@ -371,7 +380,9 @@ sample_names=($(ls *))
 
 for sample in ${sample_names[@]}
 do
-go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/mf/${sample}.svg
+#SVG # go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../svg/mf/${sample}.svg
+#PDF # go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../pdf/mf/${sample}.pdf
+go_plot.py --obo=../../../../../../../input-data/go/go.obo --go_file=${sample} --outfile=../png/mf/${sample}.png
 done
 ```
 

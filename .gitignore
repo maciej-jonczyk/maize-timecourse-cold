@@ -6,12 +6,15 @@ other-files/
 input-data/
 **/rdata-saved/
 **/results/
+**/plot*
 
 # intermediate and easy to recreate files and dirs
 **/*_cache
 **/*_files
 **/*.html
 **/*.pdf
+**/*.eps
+**/*.zip
 **/.Rproj.user
 **/.RData
 **/.Rhistory

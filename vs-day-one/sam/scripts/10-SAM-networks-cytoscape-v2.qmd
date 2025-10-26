@@ -146,6 +146,15 @@ zcat /media/mj/ANTIX-LIVE/siec-ala-string/4577.protein.links.full.v12.0.txt.gz |
 pigz --best ~/full-network
 mv ~/full-network.gz ../../../input-data/networks/
 
+# Translate ID in annotation from NAM to UP
+cd ../../../input-data/go/
+sed -f ../networks/nam-up-dict anno-all-wide > anno-all-wide-UP
+# cut NAM IDs
+cut -f1 anno-all-wide > x
+# paste NAM IDS to UP IDs with annotation and sort by UP
+paste x anno-all-wide-UP | sort -k2,2 -t $'\t' > x2
+mv x2 anno-all-wide-NAM-UP
+
 ```
 
 ```{bash UPs-in-net}
@@ -223,13 +232,16 @@ cut -f2,3 -d $'\t' c10_UP_srt | sort -u | wc -l
 ```
 
 ## Add network data
-```{bash inter4UPs}
-cd ../results/network/
 
-# cut UPs column, extract data for first interactors from network file, add annotation
+```{bash join-net-cluster}
+cd ../results/network/
+  
+## extract data for first interactors from network file
+  
+# cut UPs column
 cut -f2 -d $'\t' c10_UP_srt | sort -u > c10_ids_up
 
-# check duplicates- there are some
+# check duplicates
 cut -f2 -d $'\t' c10_UP_srt | sort | uniq -dc
 # - there are some
 
@@ -239,69 +251,128 @@ cut -f2,3 -d $'\t' c10_UP_srt | sort | uniq -dc | expand | tr -s ' ' |  cut -f3 
 cut -f2,3 -d $'\t' c10_UP_srt | sort | uniq -dc | expand | tr -s ' ' |  cut -f3 -d' ' | sort -u | wc -l
 # - no, so it is effect of Up-NAM many to many mapping
 
+# extract UPs removing duplicates
+cut -f2 -d $'\t' c10_UP_srt | sort -u > c10_UP_srt_uniqids
+
+# extract interactions for selected UPs from full network
+zgrep -Fwf c10_UP_srt_uniqids ../../../../input-data/networks/full-network.gz > c10_UP_net_selected
+
+
+## Add NAMs and description ##
+# for UP1
+
+# translate spaces to tabs in network data
+tr ' ' '\t' < c10_UP_net_selected > ~/x
+# sort by UP1
+sort -k1,1 -t $'\t' ~/x > ~/xUP1
+
+# join, keeping all network data, there are multiple UPs for some NAMs so number of rows in output is greater than in xUP1
+join -1 1 -2 2 -t $'\t' -a1 -o auto ~/xUP1 ../../../../input-data/go/anno-all-wide-NAM-UP > ~/x2
+# 1=UP1, 2=UP2, 17=NAM1, 18=descr1
+
+# for UP2
+# sort by UP2
+sort -k2,2 -t $'\t' ~/x2 > ~/xUP2
+# join - using HOME directory
+join -j 2 -t $'\t' -a1 -o auto ~/xUP2 ../../../../input-data/go/anno-all-wide-NAM-UP > ~/xUPsNAMs
+# 1,19,20 - UP2, 2,17,18 - UP1
+
+## Add cluster data ##
+
+# UP1
+# check sorting, using original results from R (without UPs)
+sort -k1,1 -t $'\t' -c c10_m1.25_sort
+# ok
+
+# sort cluster data by NAM1
+sort -k17,17 -t $'\t' ~/xUPsNAMs > ~/xNAM1
+
+# join
+join -1 17 -2 1 -t $'\t' -a1 -o auto ~/xNAM1 c10_m1.25_sort > ~/x2NAM1
+# 1,21,22 - NAM1, 
+
+# UP2
+# sort
+sort -k19,19 -t $'\t' ~/x2NAM1 > ~/xNAM2
+
+# join
+join -1 19 -2 1 -t $'\t' -a1 -o auto ~/xNAM2 c10_m1.25_sort > ~/x2NAM1NAM2
+# 1,3,20,23,24 NAM2, 2,4,19,21,22 NAM1
+
+# select rows with NAM1 not empty - this is in the clusters
+awk -v FS='\t' '$21!=""' ~/x2NAM1NAM2 > ~/x3NAM # było $2
+
+# tidy-up
+awk -v FS='\t' -v OFS='\t' '{print $4,$2,$19,$21,$22,$3,$1,$20,$23,$24,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18}' ~/x3NAM > ~/x4final
+
+#######################
+
+## Checks
+# NAM - UP mapping
+# cut NAMs and UPs for both intracting proteins
+cut -f1,2 -d $'\t' ~/x4final > ~/x1
+cut -f6,7 -d $'\t' ~/x4final > ~/x2
+# concatenate
+cat ~/x1 ~/x2 | sort -u > ~/x3
+# translate NAMs to UPs
+sed -f ../../../../input-data/networks/nam-up-dict ~/x3 > ~/x
+# select rows where UP2 are missing
+awk -v FS='\t' -v OFS='\t' '$1!=$2 {print $2}' ~/x | sort -u
+# should be empty
+
+# NAM - description
+# cut corresponding columns
+cut -f2,3 -d $'\t' ~/x4final | sort -u > ~/x1
+cut -f7,8 -d $'\t' ~/x4final | sort -u > ~/x2
+# concatenate
+cat ~/x1 ~/x2 | sort -u > ~/x3
+# compare to file with description
+join -j1 -t $'\t' ../../../../input-data/go/anno-all-wide ~/x3 > ~/x4
+# select rows with different data in description
+awk -v FS='\t' -v OFS='\t' '$2!=$3' ~/x4 | sort -u
+
+## Check NAM - cluster assignment
+# extract respecive columns
+cut -f2,4,5 -d $'\t' ~/x4final | sort -u > ~/x1
+cut -f7,9,10 -d $'\t' ~/x4final | sort -u > ~/x2
+# concatenate
+cat ~/x1 ~/x2 | sort -u > ~/x3
+# does data present in both files match?
+join -j1 -t $'\t' c10_m1.25_sort ~/x3 > ~/x4
+# cut respective columns and compare with diff
+cut -f2,3 -d $'\t' ~/x4 > ~/x41
+cut -f4,5 -d $'\t' ~/x4 > ~/x42
+diff -s ~/x41 ~/x42
+# Pliki /home/mj/x41 i /home/mj/x42 są identyczne
+
+# Check NAMs not in cluster
+# extract NAMs without cluster from final file
+join -j1 -t $'\t' -a1 -a2 -o auto c10_m1.25_sort ~/x3 | awk -v FS='\t' -v OFS='\t' '$2=="" && $4==""' > ~/x5
+# grep them from network assignment file
+grep -Fwf ~/x5 c10_m1.25_sort > ~/x2
+# check number of rows, should be 0
+wc -l ~/x2
+# 0 /home/mj/x2
+
+## Check UP - UP assignment
+# extract from final file
+cut -f1,6 -d $'\t' ~/x4final | tr -d '\t' | sort -u > ~/x
+# extract info from full network
+zcat ../../../../input-data/networks/full-network.gz | cut -f1,2 -d' ' | tr -d ' ' | tail -n +2 | sort -u > ~/x2
+# grep data from final file from full network - all should be there
+grep -Fwf ~/x ~/x2 > ~/x3
+# compare
+diff -s  ~/x3 ~/x
+# Pliki /home/mj/x3 i /home/mj/x są identyczne
+
+# Cleanup
+
+mv ~/x4final c10_net_allcl
+pigz --best c10_net_allcl
+rm ~/x*
 
 ```
 
-<!-- NIZEJ SA STARE RZECZY -->
-```{bash join-cluster-network}
-cd ../results/network/
-
-# 5. Subsetting STRING 12 network to include only interactions for UniProts in xok... files
-# sorting network data by UPs
-sort -k1,1 -t" " <(zcat ../../../../input-data/networks/full-network.gz) | tr ' ' '\t' > ~/xfull-srt
-
-# join 
-join -1 2 -2 1 -t $'\t' c10_UP_srt ~/xfull-srt > ~/xcl-net
-
-# rearrange columns
-awk -v FS='\t' -v OFS='\t' '{print $1,$6,$0}' ~/xcl-net | cut --complement -f3,8 -d $'\t' > clall-net
-
-# how many interactions for each cluster
-cut -f4 -d $'\t' clall-net | sort | uniq -c
-# 303590 1
-# 274637 10
-# 309194 2
-# 323844 3
-# 314652 4
-# 943612 5
-# 447004 6
-# 232698 7
-# 307952 8
-# 339868 9
-
-# It is way to many - filtering on score
-awk -v FS='\t' -v OFS='\t' '$NF>=400' clall-net > clall-net400
-
-# check how many interactions for each cluster
-cut -f4 -d $'\t' clall-net400 | sort | uniq -c
-#  36057 1
-#  41616 10
-#  49007 2
-#  46356 3
-#  41553 4
-# 208434 5
-#  79394 6
-#  30542 7
-#  53185 8
-#  52277 9
-
-
-# more stringent filtering
-awk -v FS='\t' -v OFS='\t' '$NF>=700' clall-net400 > clall-net700
-
-# check
-cut -f4 -d $'\t' clall-net700 | sort | uniq -c
-#   6386 1
-#   8014 10
-#  12422 2
-#  10712 3
-#   6958 4
-#  71027 5
-#  19882 6
-#   6472 7
-#  14782 8
-#  12450 9
-```
 
 ## Split by cluster
 
@@ -309,12 +380,12 @@ cut -f4 -d $'\t' clall-net700 | sort | uniq -c
 cd ../results/network/
 
 # using 400 score cutoff
-awk -v FS='\t' -v OFS='\t' '{ print > "cluster_"$4"_400.txt" }' clall-net400
+zcat c10_net_allcl.gz | awk -v FS='\t' -v OFS='\t' '$24>=400 { print > "cluster_"$4"_400.txt" }'
 
 # add header
 
 for i in {1..10}; do
-  echo -e "protein1\tprotein2\tgene\tcluster\tmembership\tdescription\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" | cat - cluster_${i}_400.txt > temp && mv temp cluster_${i}_400.txt ;
+  echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" | cat - cluster_${i}_400.txt > temp && mv temp cluster_${i}_400.txt ;
 done
 ```
 
@@ -340,50 +411,12 @@ Using descriptions related to transcription regulation.
 ##
 
 cd ../results/network/
+echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" > header-net-tab
+
 for i in {1..10}; do
   grep -f  ../../../../input-data/go/genes-tran-reg cluster_${i}_400.txt > x
   cat header-net-tab x > cluster_${i}_400_tran-reg.txt;
 done
-```
-
-## Change GO annotation file from NAM to UP
-
-This will not be used - new GO-enrichment in networks doesn't make sense
-
-```{bash GO-anno}
-# transform best-nam-string-ids to sed file
-cd ../../../input-data/networks/
-
-awk -v FS='\t' -v OFS='\t' '{print "s/"$2"/"$1"/g"}' best-nam-string-ids > nam-up-dict
-
-# uses file outside project directory
-sed -f nam-up-dict /media/mj/ANTIX-LIVE/GO/3.1_B73v5.MaizeGDB.CLEANED.gaf > B73v5_UniProt.gaf
-
-# Alternative annotation from UniProt
-wget https://ftp.ebi.ac.uk/pub/databases/GO/goa/proteomes/272950.Z_mays_1.goa
-
-## stats
-## how many annotatons
-tail -n +5 272950.Z_mays_1.goa | cut -f2 | wc -l
-# 291387
-## how many unique genes
-tail -n +5 272950.Z_mays_1.goa | cut -f2 | sort -u | wc -l
-# 44753
-
-# One more alternative annotation - from NCBI
-## In the same dir gene descriptions could be potentially found
-## like: *feature_table*, *_genomic.gff, *genomic.gtf
-wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/902/167/145/GCF_902167145.1_Zm-B73-REFERENCE-NAM-5.0/GCF_902167145.1-RS_2025_02_gene_ontology.gaf.gz
-
-## stats
-## how many annotations
-zless GCF_902167145.1-RS_2025_02_gene_ontology.gaf.gz | tail -n +10 | cut -f2 | wc -l
-# 81166
-## how many unique genes
-zless GCF_902167145.1-RS_2025_02_gene_ontology.gaf.gz | tail -n +10 | cut -f2 | sort -u | wc -l
-# 23387
-
-# -> annotation from UniProt looks better. Also it has UP IDs while file from NCBI has geneindex (?) IDs
 ```
 
 ## References
