@@ -1,0 +1,491 @@
+---
+title: "Prepare network files for analysis in Cytoscape"
+format: html
+date: "2025-11-09"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+The aim of this code is to prepare files (clustering results and String network data [@szklarczykSTRINGDatabase20232023]) for Cytoscape analysis and visualization [@clineIntegrationBiologicalNetworks2007]. Separately for each cluster.
+Using 0.7 membership cutoff.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/leaf/scripts")
+```
+
+```{r packages}
+#| eval: false
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("Mfuzz")
+BiocManager::install("marray")
+BiocManager::install("limma")
+```
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+## Load data
+
+
+:::{.calout-important}
+This script uses short description created in `/media/mj/ANTIX-LIVE/project1-stat/input-data/go/00-trim-anno.qmd`.
+:::
+
+`c13_m1.35` contains data for clusters.
+
+
+```{r load}
+load("../rdata-saved/mfuzz_c13_m1.35_leafALLsig.RDa")
+
+# # gene description - NEW, short version!
+anno = read.table("../../../input-data/go/anno-all-short", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+colnames(anno) <- c("gene", "description")
+
+# The creation of anno-all-wide is desribed here:
+# https://github.com/maciej-jonczyk/network-ala/blob/main/annotation.sh
+```
+
+## Prepare and export cluster data
+
+```{bash net-dir}
+rm -r ../results/network/
+mkdir ../results/network/
+```
+
+```{r membership-table}
+## All genes in clusters with membership values
+## 1.  Sprawdź, co w nim jest
+# str(c13_m1.35)
+
+## 2.  Pobierz wektor cluster (nazwany) i macierz membership
+cl_vec   <- c13_m1.35$cluster               # wektor długości 16288, nazwy = geny
+mem_mat  <- c13_m1.35$membership            # macierz 16288 × 13
+
+## 3.  Upewnij się, że nazwy wierszy obu obiektów są zgodne
+identical(names(cl_vec), rownames(mem_mat))
+
+## 4.  Stwórz data‑frame z dwoma zestawami kolumn
+df <- data.frame(
+  cluster = cl_vec,                     # pierwsza kolumna – numer klas
+  mem_mat,                              # kolejne 10 kolumn – membership
+  check.names = FALSE                   # pozwala na nazwę "1", "2", …
+)
+
+## 5.  (Opcjonalnie) nadaj sensowne nazwy kolumnom membership
+colnames(df)[2:ncol(df)] <- paste0("mem_", seq_len(ncol(mem_mat)))
+
+# make column from rownames
+
+library(dplyr)
+
+df2 <- df |>
+  mutate(gene = rownames(df)) |>   # nowa kolumna "gene"
+  select(gene, everything())             # opcjonalnie przestaw kolejność
+
+# select only rows where any of the memberships is >= 0.7
+c13_m1.35_mem07 <- df2 |>
+  filter(
+    if_any(starts_with("mem_"),
+           ~ . >= 0.7)              # warunek na każdą z nich
+  )
+
+
+# Extract max value from membership columns and retain it in new column
+# 1 Wybieramy kolumny zaczynające się od "mem_"
+mem_cols <- grep("^mem_", names(c13_m1.35_mem07), value = TRUE)
+
+# 2 Obliczamy maksimum w każdym wierszu (ignorujemy NA)
+max_mem <- apply(c13_m1.35_mem07[mem_cols], 1, max, na.rm = TRUE)
+
+# 3 Tworzymy nową ramkę z wybranymi kolumnami + maksymalną wartością
+c13_m1.35_maxmem <- data.frame(
+  gene        = c13_m1.35_mem07$gene,
+  cluster     = c13_m1.35_mem07$cluster,
+  max_mem     = max_mem,
+  stringsAsFactors = FALSE
+)
+
+# write.table(c13_m1.35_maxmem, file="../results/network/c13_m1.35_maxmem", sep="\t", quote=FALSE, row.names=FALSE)
+
+# Table will be joined with String network data by gene name so it must be sorted
+
+c13_m1.35_sort <- c13_m1.35_maxmem[order(c13_m1.35_maxmem$gene), ]
+
+write.table(c13_m1.35_sort, file="../results/network/c13_m1.35_sort", sep="\t", quote=FALSE, row.names=FALSE)
+
+```
+
+## Prepare UniProt-NAM mapping with network data - need to be done only once!
+
+All clusters are processed as one file. Split by cluster will be done at the end.
+
+Files needed:
+- 4577.protein.links.full.v12.0.txt.gz downloaded from String database
+https://string-db.org/cgi/download?sessionId=bqBkc8wRFKRG
+- NAM - UniProt mapping Zea_mays.Zm-B73-REFERENCE-NAM-5.0.57.uniprot.tsv.gz
+https://ftp.ebi.ac.uk/ensemblgenomes/pub/release-57/plants/tsv/zea_mays/Zea_mays.Zm-B73-REFERENCE-NAM-5.0.57.uniprot.tsv.gz
+- cluster data
+
+```{bash clean-network1}
+##### This step must be done only once! #####
+
+# removing unnecessary prefix from UniProts in whole network
+## This step uses source file stored outside project directory tree and temporarily use home dir
+zcat /media/mj/ANTIX-LIVE/siec-ala-string/4577.protein.links.full.v12.0.txt.gz | sed 's/4577\.//g' > ~/full-network
+pigz --best ~/full-network
+mv ~/full-network.gz ../../../input-data/networks/
+```
+
+```{bash clean-network2}
+# Translate ID in annotation from NAM to UP
+cd ../../../input-data/go/
+sed -f ../networks/nam-up-dict anno-all-short > anno-all-short-UP
+# cut NAM IDs
+cut -f1 anno-all-short > x
+# paste NAM IDS to UP IDs with annotation and sort by UP
+paste x anno-all-short-UP | sort -k2,2 -t $'\t' > anno-all-short-NAM-UP
+```
+
+```{bash UPs-in-net}
+##### This step must be done only once! #####
+
+cd ../../../input-data/networks/
+## Following code uses source file stored outside project directory tree and temporarily use home dir
+
+# list of UniProt (UP) IDs in network
+# file is space-separated
+cut -f1,2 -d" " <(zcat full-network.gz) > ~/x
+tail -n +2 ~/x | tr ' ' '\n' > ~/x2
+
+# check
+wc -l ~/x2
+# 46548750 x2
+expr 23274375 \* 2
+# 46548750
+
+# selecting unique UPs
+sort -u ~/x2 > uniq-ups-string
+wc -l uniq-ups-string
+# 34009 uniq-ups-string
+
+```
+
+```{bash UPs-nam}
+##### This step must be done only once! #####
+
+cd ../../../input-data/networks/
+
+# 2. Selecting UPs present in network from file mapping UP-NAM
+# mapping file
+## orginally downloaded from http://ftp.ensemblgenomes.org/pub/release-57/plants/tsv/zea_mays/
+zcat /media/mj/ANTIX-LIVE/anno_fun_v45/Zea_mays.Zm-B73-REFERENCE-NAM-5.0.57.uniprot.tsv.gz | sort -k4,4 -t $'\t' > ~/xnamuniprotsrt
+# checking
+head -n1 ~/xnamuniprotsrt | cat -A
+# file is TAB-separated
+join -1 1 -2 4 -t $'\t' uniq-ups-string ~/xnamuniprotsrt > ~/xnam-string
+# Selecting could be done also with grep but it selects also splicing forms, ie. UniProt IDs with subscript -1 or -2
+
+# 3. Choosing the best UP for each NAM
+# checking column numbers
+head -n1 ~/xnam-string | tr '\t' '\n' | cat -n
+# setting locale to ensure proper sorting
+LC_ALL=C sort -k2,2 -k7,7rn -t $'\t' ~/xnam-string | sort -u -k2,2 -t $'\t' > best-nam-string
+# checking file
+wc -l best-nam-string
+# 27425
+
+# retrieve only IDs
+cut -f1,2 -d $'\t' best-nam-string  > best-nam-string-ids
+```
+
+## Join cluster data with UP-NAM mapping
+
+```{bash join-cluster-nam}
+##### This step must be done only once for a given 'c' and 'm' combination! #####
+
+cd ../results/network/
+
+# join and sort by UP
+join -1 2 -2 1 -t $'\t' ../../../../input-data/networks/best-nam-string-ids c13_m1.35_sort | sort -k2,2 -t $'\t'> c13_UP_srt
+
+## checks - NAMs are unique but UP no
+wc -l c13_UP_srt
+# 3186
+# NAMs
+cut -f1 -d $'\t' c13_UP_srt | sort -u | wc -l
+# 3186
+# UPs
+cut -f2 -d $'\t' c13_UP_srt | sort -u | wc -l
+# 3167 # some UPs map to multiple NAMs
+cut -f2,3 -d $'\t' c13_UP_srt | sort -u | wc -l
+# 3176 # this is less pronounced, when both UPs and clusters are considered
+# Still it will require filtering or concatenation
+
+# select multimapping UPs
+cut -f2 -d $'\t' c13_UP_srt | sort | uniq -d > x
+
+### Duplicated UPs
+## two different clusters
+# A0A1D6DUD4
+# Zm00001eb067000 A0A1D6DUD4      7       0.79438395623999
+# Zm00001eb067010 A0A1D6DUD4      1       0.740207054527122
+# A0A1D6EI06
+# Zm00001eb032550 A0A1D6EI06      10      0.975696750090697
+# Zm00001eb092450 A0A1D6EI06      2       0.826583562918674
+# A0A1D6EPP5
+# Zm00001eb099360 A0A1D6EPP5      5       0.720260802520963
+# Zm00001eb312360 A0A1D6EPP5      9       0.780888641078761
+# A0A1D6HN57
+# Zm00001eb110210 A0A1D6HN57      5       0.818966709860545
+# Zm00001eb257740 A0A1D6HN57      3       0.838643577851395
+# A0A1D6HRL4
+# Zm00001eb118040 A0A1D6HRL4      3       0.897655196539876
+# Zm00001eb298890 A0A1D6HRL4      11      0.911648521308728
+# A0A1D6HUF3
+# Zm00001eb302160 A0A1D6HUF3      10      0.83916919412529
+# Zm00001eb302180 A0A1D6HUF3      1       0.71958546111666
+# A0A1D6IEI4
+# Zm00001eb411770 A0A1D6IEI4      1       0.939317812146441
+# Zm00001eb431540 A0A1D6IEI4      3       0.818860611757829
+# A0A1D6N8W3
+# Zm00001eb149270 A0A1D6N8W3      4       0.925424872179223
+# Zm00001eb149810 A0A1D6N8W3      10      0.755079463883166
+# A0A1D6PID0
+# Zm00001eb160350 A0A1D6PID0      1       0.952854849970305
+# Zm00001eb401060 A0A1D6PID0      8       0.744446052773213
+
+## the same cluster
+# A0A1D6ECH4
+# Zm00001eb085290 A0A1D6ECH4      1       0.71569959910328
+# Zm00001eb085310 A0A1D6ECH4      1       0.921318957754959
+# A0A1D6EQJ2
+# Zm00001eb099760 A0A1D6EQJ2      2       0.704603092563053
+# Zm00001eb099770 A0A1D6EQJ2      2       0.962349115101821
+# A0A1D6GEK2
+# Zm00001eb211920 A0A1D6GEK2      2       0.965248411051119
+# Zm00001eb211930 A0A1D6GEK2      2       0.936069118039378
+# Zm00001eb211940 A0A1D6GEK2      2       0.947826862611792
+# A0A1D6HQC5
+# Zm00001eb259610 A0A1D6HQC5      9       0.910669057744457
+# Zm00001eb259620 A0A1D6HQC5      9       0.866623204804515
+# A0A1D6JIG9
+# Zm00001eb434000 A0A1D6JIG9      10      0.85594856248883
+# Zm00001eb434010 A0A1D6JIG9      10      0.936514436087578
+# A0A1D6KBA7
+# Zm00001eb026180 A0A1D6KBA7      2       0.728859205505149
+# Zm00001eb185710 A0A1D6KBA7      2       0.877167844603152
+# A0A1D6NAC1
+# Zm00001eb151820 A0A1D6NAC1      9       0.850430708768584
+# Zm00001eb151850 A0A1D6NAC1      9       0.90338116384459
+# A0A1D6QM41
+# Zm00001eb201590 A0A1D6QM41      10      0.851950337807111
+# Zm00001eb201600 A0A1D6QM41      10      0.962081230277478
+# B6TGT0
+# Zm00001eb028980 B6TGT0  8       0.816783789906092
+# Zm00001eb136620 B6TGT0  8       0.726828882765232
+
+# Exclude UPs matching >1 NAM from different clusters
+# select UPs mapping to different clusters
+grep -f x c13_UP_srt | cut -f2,3 -d $'\t' | tr '\t' '_'| sort | uniq -u| cut -f1 -d'_' | sort -u > ids2exclude
+# exclude them from UP-NAM-cluster file
+grep -v -f ids2exclude c13_UP_srt > c13_UP_srt_noambiq
+```
+
+## Add network data
+
+```{bash join-net-cluster}
+cd ../results/network/
+  
+## extract data for first interactors from network file
+  
+# cut UPs column
+cut -f2 -d $'\t' c13_UP_srt_noambiq | sort -u > c13_ids_up
+
+# extract UPs removing duplicates
+cut -f2 -d $'\t' c13_UP_srt_noambiq | sort -u > c13_UP_srt_noambiq_uniqids
+
+# extract interactions for selected UPs from full network
+zgrep -Fwf c13_UP_srt_noambiq_uniqids ../../../../input-data/networks/full-network.gz > c13_UP_net_selected
+
+
+## Add NAMs and description ##
+# for UP1
+
+# translate spaces to tabs in network data
+tr ' ' '\t' < c13_UP_net_selected > ~/x
+# sort by UP1
+sort -k1,1 -t $'\t' ~/x > ~/xUP1
+
+# join, keeping all network data, there are multiple UPs for some NAMs so number of rows in output is greater than in xUP1
+join -1 1 -2 2 -t $'\t' -a1 -o auto ~/xUP1 ../../../../input-data/go/anno-all-short-NAM-UP > ~/x2
+# 1=UP1, 2=UP2, 17=NAM1, 18=descr1
+
+# for UP2
+# sort by UP2
+sort -k2,2 -t $'\t' ~/x2 > ~/xUP2
+# join - using HOME directory
+join -j 2 -t $'\t' -a1 -o auto ~/xUP2 ../../../../input-data/go/anno-all-short-NAM-UP > ~/xUPsNAMs
+# 1,19,20 - UP2, 2,17,18 - UP1
+
+## Add cluster data ##
+
+# UP1
+# check sorting, using original results from R (without UPs)
+sort -k1,1 -t $'\t' -c c13_m1.35_sort
+# ok
+
+# sort cluster data by NAM1
+sort -k17,17 -t $'\t' ~/xUPsNAMs > ~/xNAM1
+
+# join
+join -1 17 -2 1 -t $'\t' -a1 -o auto ~/xNAM1 c13_m1.35_sort > ~/x2NAM1
+# 1,21,22 - NAM1, 
+
+# UP2
+# sort
+sort -k19,19 -t $'\t' ~/x2NAM1 > ~/xNAM2
+
+# join
+join -1 19 -2 1 -t $'\t' -a1 -o auto ~/xNAM2 c13_m1.35_sort > ~/x2NAM1NAM2
+# 1,3,20,23,24 NAM2, 2,4,19,21,22 NAM1
+
+# select rows with NAM1 not empty - this is in the clusters
+awk -v FS='\t' '$21!=""' ~/x2NAM1NAM2 > ~/x3NAM # było $2
+
+# tidy-up
+awk -v FS='\t' -v OFS='\t' '{print $4,$2,$19,$21,$22,$3,$1,$20,$23,$24,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18}' ~/x3NAM > ~/x4final
+```
+
+```{bash checks}
+cd ../results/network/
+
+## Checks
+# NAM - UP mapping
+# cut NAMs and UPs for both intracting proteins
+cut -f1,2 -d $'\t' ~/x4final > ~/x1
+cut -f6,7 -d $'\t' ~/x4final > ~/x2
+# concatenate
+cat ~/x1 ~/x2 | sort -u > ~/x3
+# translate NAMs to UPs
+sed -f ../../../../input-data/networks/nam-up-dict ~/x3 > ~/x
+# select rows where columns are not equal
+awk -v FS='\t' -v OFS='\t' '$1!=$2 {print $2}' ~/x | sort -u
+# should be empty
+
+# NAM - description
+# cut corresponding columns
+cut -f2,3 -d $'\t' ~/x4final | sort -u > ~/x1
+cut -f7,8 -d $'\t' ~/x4final | sort -u > ~/x2
+# concatenate
+cat ~/x1 ~/x2 | sort -u > ~/x3
+# compare to file with description
+join -j1 -t $'\t' ../../../../input-data/go/anno-all-short ~/x3 > ~/x4
+# select rows with different data in description
+awk -v FS='\t' -v OFS='\t' '$2!=$3' ~/x4 | sort -u
+
+## Check NAM - cluster assignment
+# extract respecive columns
+cut -f2,4,5 -d $'\t' ~/x4final | sort -u > ~/x1
+cut -f7,9,10 -d $'\t' ~/x4final | sort -u > ~/x2
+# concatenate
+cat ~/x1 ~/x2 | sort -u > ~/x3
+# does data present in both files match?
+join -j1 -t $'\t' c13_m1.35_sort ~/x3 > ~/x4
+# cut respective columns and compare with diff
+cut -f2,3 -d $'\t' ~/x4 > ~/x41
+cut -f4,5 -d $'\t' ~/x4 > ~/x42
+diff -s ~/x41 ~/x42
+# Pliki /home/mj/x41 i /home/mj/x42 są identyczne
+
+# Check NAMs not in cluster
+# extract NAMs without cluster from final file
+join -j1 -t $'\t' -a1 -a2 -o auto c13_m1.35_sort ~/x3 | awk -v FS='\t' -v OFS='\t' '$2=="" && $4==""' > ~/x5
+# grep them from network assignment file
+grep -Fwf ~/x5 c13_m1.35_sort > ~/x2
+# check number of rows, should be 0
+wc -l ~/x2
+# 0 /home/mj/x2
+
+## Check UP - UP assignment
+# extract from final file
+cut -f1,6 -d $'\t' ~/x4final | tr -d '\t' | sort -u > ~/x
+# extract info from full network
+zcat ../../../../input-data/networks/full-network.gz | cut -f1,2 -d' ' | tr -d ' ' | tail -n +2 | sort -u > ~/x2
+# grep data from final file from full network - all should be there
+grep -Fwf ~/x ~/x2 > ~/x3
+# compare
+diff -s  ~/x3 ~/x
+# Pliki /home/mj/x3 i /home/mj/x są identyczne
+
+# Cleanup
+
+mv ~/x4final c13_net_allcl
+rm ~/x*
+
+```
+
+
+## Split by cluster
+
+```{bash split}
+cd ../results/network/
+
+# using 400 score cutoff
+awk -v FS='\t' -v OFS='\t' '$24>=400 { print > "cluster_"$4"_400.txt" }' c13_net_allcl
+
+# add header
+
+for i in {1..13}; do
+  echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" | cat - cluster_${i}_400.txt > temp && mv temp cluster_${i}_400.txt ;
+done
+
+pigz --best c13_net_allcl
+```
+
+## Subset networks by interesting GO-categories
+
+Using descriptions related to transcription regulation.
+
+```{bash tran-reg}
+# Retrieval of Go categories containing string 'transc'
+
+## Need to be done only once ##
+## grep -i 'transc' ../../../input-data/go/go.obo | grep -o 'GO:.*' | grep ' ! ' | sort -u > ../results/network/transc-go
+##
+
+# Next - manual selection of interesting categories
+# output file is transc-go-selected
+
+# For now only 'GO:0003700 ! DNA-binding transcription factor activity' is used
+# extract genes annotated with this GO term, entire go.cats file is used (without filtering for 'expressed genes') but it not harm, anyways not expressed genes will not be selected from clusters as they contain only expressed genes
+
+## Need to be done only once ##
+## grep 'GO:0003700' ../../../input-data/go/go.cats | cut -f1 -d $'\t' | sort -u > ../../../input-data/go/genes-tran-reg
+##
+
+cd ../results/network/
+echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" > header-net-tab
+
+for i in {1..13}; do
+  grep -f  ../../../../input-data/go/genes-tran-reg cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_tran-reg.txt;
+done
+```
+
+## References
