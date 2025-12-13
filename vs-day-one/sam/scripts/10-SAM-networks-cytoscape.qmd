@@ -352,6 +352,8 @@ awk -v FS='\t' -v OFS='\t' '{print "s/"$2"/"$1"/g"}' best-nam-string-ids > nam-u
 # uses file outside project directory
 sed -f nam-up-dict /media/mj/ANTIX-LIVE/GO/3.1_B73v5.MaizeGDB.CLEANED.gaf > B73v5_UniProt.gaf
 
+cd ../go/
+
 # Alternative annotation from UniProt
 wget https://ftp.ebi.ac.uk/pub/databases/GO/goa/proteomes/272950.Z_mays_1.goa
 

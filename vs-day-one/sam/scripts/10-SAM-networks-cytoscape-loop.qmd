@@ -48,8 +48,8 @@ rm(list=ls())
 ```{r load}
 load("../rdata-saved/mfuzz_c10_m1.25_samALLsig.RDa")
 
-# # gene description
-anno = read.table("../../../../anno_fun_v45/anno-all-wide", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+# # gene description - NEW, short version!
+anno = read.table("../../../input-data/go/anno-all-short", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
 colnames(anno) <- c("gene", "description")
 
 # The creation of anno-all-wide is desribed here:
@@ -148,12 +148,12 @@ mv ~/full-network.gz ../../../input-data/networks/
 
 # Translate ID in annotation from NAM to UP
 cd ../../../input-data/go/
-sed -f ../networks/nam-up-dict anno-all-wide > anno-all-wide-UP
+sed -f ../networks/nam-up-dict anno-all-short > anno-all-short-UP
 # cut NAM IDs
-cut -f1 anno-all-wide > x
+cut -f1 anno-all-short > x
 # paste NAM IDS to UP IDs with annotation and sort by UP
-paste x anno-all-wide-UP | sort -k2,2 -t $'\t' > x2
-mv x2 anno-all-wide-NAM-UP
+paste x anno-all-short-UP | sort -k2,2 -t $'\t' > x2
+mv x2 anno-all-short-NAM-UP
 
 ```
 
@@ -267,14 +267,14 @@ tr ' ' '\t' < c10_UP_net_selected > ~/x
 sort -k1,1 -t $'\t' ~/x > ~/xUP1
 
 # join, keeping all network data, there are multiple UPs for some NAMs so number of rows in output is greater than in xUP1
-join -1 1 -2 2 -t $'\t' -a1 -o auto ~/xUP1 ../../../../input-data/go/anno-all-wide-NAM-UP > ~/x2
+join -1 1 -2 2 -t $'\t' -a1 -o auto ~/xUP1 ../../../../input-data/go/anno-all-short-NAM-UP > ~/x2
 # 1=UP1, 2=UP2, 17=NAM1, 18=descr1
 
 # for UP2
 # sort by UP2
 sort -k2,2 -t $'\t' ~/x2 > ~/xUP2
 # join - using HOME directory
-join -j 2 -t $'\t' -a1 -o auto ~/xUP2 ../../../../input-data/go/anno-all-wide-NAM-UP > ~/xUPsNAMs
+join -j 2 -t $'\t' -a1 -o auto ~/xUP2 ../../../../input-data/go/anno-all-short-NAM-UP > ~/xUPsNAMs
 # 1,19,20 - UP2, 2,17,18 - UP1
 
 ## Add cluster data ##
@@ -304,9 +304,10 @@ awk -v FS='\t' '$21!=""' ~/x2NAM1NAM2 > ~/x3NAM # było $2
 
 # tidy-up
 awk -v FS='\t' -v OFS='\t' '{print $4,$2,$19,$21,$22,$3,$1,$20,$23,$24,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18}' ~/x3NAM > ~/x4final
+```
 
-#######################
-
+```{bash checks}
+cd ../results/network/
 ## Checks
 # NAM - UP mapping
 # cut NAMs and UPs for both intracting proteins
@@ -327,7 +328,7 @@ cut -f7,8 -d $'\t' ~/x4final | sort -u > ~/x2
 # concatenate
 cat ~/x1 ~/x2 | sort -u > ~/x3
 # compare to file with description
-join -j1 -t $'\t' ../../../../input-data/go/anno-all-wide ~/x3 > ~/x4
+join -j1 -t $'\t' ../../../../input-data/go/anno-all-short ~/x3 > ~/x4
 # select rows with different data in description
 awk -v FS='\t' -v OFS='\t' '$2!=$3' ~/x4 | sort -u
 
@@ -368,7 +369,6 @@ diff -s  ~/x3 ~/x
 # Cleanup
 
 mv ~/x4final c10_net_allcl
-pigz --best c10_net_allcl
 rm ~/x*
 
 ```
@@ -380,13 +380,15 @@ rm ~/x*
 cd ../results/network/
 
 # using 400 score cutoff
-zcat c10_net_allcl.gz | awk -v FS='\t' -v OFS='\t' '$24>=400 { print > "cluster_"$4"_400.txt" }'
+awk -v FS='\t' -v OFS='\t' '$24>=400 { print > "cluster_"$4"_400.txt" }' c10_net_allcl
 
 # add header
 
 for i in {1..10}; do
   echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" | cat - cluster_${i}_400.txt > temp && mv temp cluster_${i}_400.txt ;
 done
+
+pigz --best c10_net_allcl
 ```
 
 ## Subset networks by interesting GO-categories
@@ -410,12 +412,95 @@ Using descriptions related to transcription regulation.
 ## grep 'GO:0003700' ../../../input-data/go/go.cats | cut -f1 -d $'\t' | sort -u > ../../../input-data/go/genes-tran-reg
 ##
 
+#cd ../results/network/
+#echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" > header-net-tab
+
 cd ../results/network/
-echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" > header-net-tab
 
 for i in {1..10}; do
-  grep -f  ../../../../input-data/go/genes-tran-reg cluster_${i}_400.txt > x
+awk '
+    NR==FNR {           # Czytamy pierwszy plik (genes-tran-reg)
+        keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
+       next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
+    }
+    $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 2
+        print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
+    }
+' ../../../../input-data/go/genes-tran-reg cluster_${i}_400.txt > x
   cat header-net-tab x > cluster_${i}_400_tran-reg.txt;
+done
+
+files=($(ls cluster_*_400_tran-reg.txt))
+
+for file in ${files[@]}; do
+# Przykład: liczymy linie w pliku data.txt
+linijek=$(wc -l < ${file})   # < – przekierowanie, dzięki czemu wc zwraca samą liczbę
+
+if (( linijek < 2 )); then
+rm ${file}
+fi
+done
+```
+
+```{bash biol-reg}
+# select genes annotated with biological regulation term
+
+cd ../results/network/
+
+for i in {1..10}; do
+awk '
+    NR==FNR {           # Czytamy pierwszy plik (genes-biol-reg)
+        keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
+       next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
+    }
+    $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 2
+        print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
+    }
+' ../../../../input-data/go/genes-biol-reg cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_biol-reg.txt;
+done
+
+files=($(ls cluster_*_400_biol-reg.txt))
+
+for file in ${files[@]}; do
+# Przykład: liczymy linie w pliku data.txt
+linijek=$(wc -l < ${file})   # < – przekierowanie, dzięki czemu wc zwraca samą liczbę
+
+if (( linijek < 2 )); then
+rm ${file}
+fi
+done
+```
+
+```{bash development-related}
+cd ../../../input-data/go
+# starting point is a list from PI - saved in file dev-cats-ps.tsv
+# join NAM - GO with selected categories
+# sort NAM - GO
+sort -k2,2 -t $'\t' go.cats > x
+sort -k1,1 -t $'\t' dev-cats-ps.tsv > x2
+# join itself
+join -1 2 -2 1 -t $'\t' x x2 | sort -k2,2 -t $'\t' > x3
+# add gene description
+join -1 1 -2 2 -t $'\t' -a2 -o auto anno-all-short x3 | cut -f4 -d $'\t' --complement > dev-cats-ps-desc.tsv
+# extract only gene column
+cut -f1 -d $'\t' dev-cats-ps-desc.tsv | sort -u > dev-genes
+```
+
+```{bash dev-rel extract}
+cd ../results/network/
+
+for i in {1..10}; do
+awk '
+    NR==FNR {           # Czytamy pierwszy plik (genes-biol-reg)
+        keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
+       next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
+    }
+    $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 2
+        print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
+    }
+' ../../../../input-data/go/dev-genes cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_dev.txt;
 done
 ```
 

@@ -1,7 +1,7 @@
 ---
-title: "Automatic import files to Cytoscape and color network"
+title: "Automatic import files to Cytoscape and color network - genes annotated to 'developmental' terms"
 format: html
-date: "2025-11-10"
+date: "2025-11-27"
 bibliography: ../../../refs-stat-anal.bib
 execute:
   fig-format: png
@@ -20,7 +20,7 @@ Environment cleaning and set-up
 ```{r setup}
 #| include: false
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/leaf/scripts")
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/sam/scripts")
 ```
 
 ```{r packages}
@@ -45,10 +45,10 @@ rm(list=ls())
 ```
 
 ```{r format all}
-clusters <- vector("list", length = 13)
+clusters <- vector("list", length = 10)
 
-for (i in 1:13) {
-  input_file=paste0("../results/network/cluster_", i, "_400_tran-reg.txt")
+for (i in 1:10) {
+  input_file=paste0("../results/network/cluster_", i, "_400_dev.txt")
   
   cl = read.table(input_file, header=TRUE, stringsAsFactors = FALSE, sep='\t', quote = "")
   
@@ -63,7 +63,6 @@ node.info <- unique(rbind(src, trg))
 
 # sort node info table - in case of UPs multimapping to NAMs select NAM with cluster (sorts numerically, NAs are before numbers. During network generation the last row for each id is selected)
 ## POTENTIAL PROBLEM, if UP have NAMs from >1 cluster it selects the one with the highest cluster number!!!
-# However - in both leaf and SAM in vs-day-one input to this script don't have such cases - filtered-out in script 10-...qmd.
 ## REQUIRE MANUAL CHECKING
 ord <- order(node.info[[1]],                 # kolumna 1 – sortowanie leksykograficzne
              as.numeric(node.info[[4]]),    # kolumna 4 – sortowanie numeryczne
@@ -76,19 +75,20 @@ edge.info=unique(cl[,!names(cl) %in% c('ensembl1', 'desc1', 'cluster1', 'member1
 
 createNetworkFromDataFrames(
   title=gsub("../results/network/", "", input_file),
-  collection="leaf networks",
+  collection="SAM networks - developmental",
   nodes=node.info_srt,
   source.id.list="uniprot1",
   target.id.list="uniprot2",
   edges=edge.info
 )
+
 # PROBLEM - ZA KAŻDĄ ZMIANĄ LICZBY KLASTRÓW TRZEBA KOLOROWAĆ RĘCZNIE W CYTOSCAPE, ROBIĆ SCREEN I POBIERAĆ KOOR W GIMP.
 
 # color nodes from main cluster
 setNodeColorMapping(
   "cluster",
-  c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"),
-  c("#ffeea0", "#fedd8e", "#fecd80", "#febc6e", "#fead5c", "#fe9d4e", "#fd8c3c", "#f27638", "#e85f35", "#dd4631", "#d32f2d", "#c9182a", "#bd0026"),
+  c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10"),
+  c("#ffeea0","#ffd687","#febc6e","#fea555","#fd8c3c","#ef7137","#e45533","#d73930","#cb1c2b","#a9072e"),
   mapping.type="c"
 )
 

@@ -479,12 +479,70 @@ Using descriptions related to transcription regulation.
 ## grep 'GO:0003700' ../../../input-data/go/go.cats | cut -f1 -d $'\t' | sort -u > ../../../input-data/go/genes-tran-reg
 ##
 
-cd ../results/network/
-echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" > header-net-tab
+#cd ../results/network/
+#echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" > header-net-tab
 
+cd ../results/network/
+# subset network files
 for i in {1..13}; do
-  grep -f  ../../../../input-data/go/genes-tran-reg cluster_${i}_400.txt > x
+awk '
+    NR==FNR {           # Czytamy pierwszy plik (genes-tran-reg)
+        keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
+       next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
+    }
+    $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 3
+        print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
+    }
+' ../../../../input-data/go/genes-tran-reg cluster_${i}_400.txt > x
   cat header-net-tab x > cluster_${i}_400_tran-reg.txt;
+done
+
+files=($(ls cluster_*_400_tran-reg.txt))
+
+for file in ${files[@]}; do
+# Przykład: liczymy linie w pliku data.txt
+linijek=$(wc -l < ${file})   # < – przekierowanie, dzięki czemu wc zwraca samą liczbę
+
+if (( linijek < 2 )); then
+rm ${file}
+fi
+done
+```
+
+```{bash photosynthesis}
+# select genes annotated with term "photosynthesis" GO:0015979
+## Need to be done only once ##
+
+# Following command must be done only one
+# grep 'GO:0015979' ../../../input-data/go/go.cats | cut -f1 -d $'\t' | sort -u > ../../../input-data/go/genes-photosyn
+
+cd ../results/network/
+# subset network files
+for i in {1..13}; do
+awk '
+    NR==FNR {           # Czytamy pierwszy plik (genes-photosyn)
+        keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
+       next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
+    }
+    $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 3
+        print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
+    }
+' ../../../../input-data/go/genes-photosyn cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_photosyn.txt;
+done
+
+files=($(ls cluster_*_400_photosyn.txt))
+
+for file in ${files[@]}; do
+# Przykład: liczymy linie w pliku data.txt
+linijek=$(wc -l < ${file})   # < – przekierowanie, dzięki czemu wc zwraca samą liczbę
+
+if (( linijek < 2 )); then
+#    echo "Plik ${file} ma tylko jedną linię (jest $linijek)."
+#else
+#    echo "Plik ${file} ma więcej linii (jest $linijek)"
+rm ${file}
+fi
 done
 ```
 

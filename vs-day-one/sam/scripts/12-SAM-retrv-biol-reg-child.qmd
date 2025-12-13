@@ -1,0 +1,132 @@
+---
+title: "Retrieve descendants of selected nodes"
+format: html
+date: "2025-09-29"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+The aim of this code is to retrieve GO's below *Biological Regulation* term.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/sam/scripts")
+```
+
+```{r packages}
+#| eval: false
+#| output: false
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install(c("GO.db", "AnnotationDbi"))
+
+
+install.packages("ontologyIndex")
+```
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+## Extract IDs
+
+According to manual at https://cran.r-project.org/web/packages/ontologyIndex/refman/ontologyIndex.html#get_ontology
+
+```{r get ids}
+library(ontologyIndex)
+
+# Read ontology from file
+go <- get_ontology("../../../input-data/go/go.obo")
+
+# Find all descendants of Biological Regulation GO category
+desc_biol_reg <- get_descendants(go, roots="GO:0065007")
+
+write.table(desc_biol_reg,
+            file = "../../../input-data/go/biol-reg-child-ids.txt",
+            row.names = FALSE,
+            col.names = FALSE,
+            quote = FALSE)
+```
+
+## Retrieve genes annotated to the selected GO terms
+
+```{bash retrieve genes}
+cd ../../../input-data/go/
+
+# retrieve all maize genes annotated to the selected GO terms
+grep -Fwf biol-reg-child-ids.txt go.cats | sort -k2,2 -t $'\t' > biol-reg-genes
+
+# join with go description
+join -t $'\t' -1 2 -2 1 -o auto biol-reg-genes go_terms_clean.tsv | sort -k2,2 -t $'\t' > biol-reg-genes-desc
+
+# add gene description
+join -t $'\t' -1 2 -2 1 -a1 -o 0,2.2,1.1,1.3 biol-reg-genes-desc anno-all-short > biol-reg-genes-desc2
+```
+
+## Subset genes from clusters
+
+```{bash subset genes}
+cd ../results/network/
+
+# 1. select column with genes (Zm...) from Biol. Reg. category for each cluster (column 2.)
+# 2. extract their annotation from biol-reg-genes-desc2
+
+for i in {1..10}; do
+cut -f2 -d $'\t' cluster_${i}_400_biol-reg.txt | sort -u > x
+
+grep -Fwf x ../../../../input-data/go/biol-reg-genes-desc2 > cluster_${i}_400_genes_biol-reg.txt
+
+done
+```
+
+```{bash select}
+# ręczne wydobycie UP IDs dla poszczególnych klastrów do zaznaczenia ręcznego w sieciach genów węzłowych
+cut -f1 -d $'\t' cluster_1_400_biol-reg.txt | sort -u > x
+```
+
+## Extract *Molecular Function* annotation
+
+```{bash mf anno}
+# All genes annotated to mf with description and GO transcription
+cd ../../../input-data/go/
+
+# extract mf terms with names
+grep -Fwf go_terms_mf.txt go_terms_clean.tsv > go_terms_mf_name.tsv
+
+# join with NAM - GO annotation
+sort -k2,2 -t $'\t' go.cats > x
+join -1 2 -2 1 -t $'\t' x go_terms_mf_name.tsv | sort -k2,2 -t $'\t' > x2
+
+# add gene description
+join -1 1 -2 2 -t $'\t' anno-all-short x2 > go_terms_mf_name2.tsv
+```
+
+
+```{bash get mf cluster}
+cd ../results/network/
+
+# 1. select column with genes (Zm...) from Biol. Reg. category for each cluster (column 2.)
+# 2. extract their annotation from biol-reg-genes-desc2
+
+for i in {1..10}; do
+cut -f2 -d $'\t' cluster_${i}_400_biol-reg.txt | sort -u > x
+
+grep -Fwf x ../../../../input-data/go/go_terms_mf_name2.tsv > cluster_${i}_400_genes_biol-reg-MF.txt
+
+done
+```
+
+## References

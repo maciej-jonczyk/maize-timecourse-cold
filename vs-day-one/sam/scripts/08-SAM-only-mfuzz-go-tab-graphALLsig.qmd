@@ -88,6 +88,10 @@ load("../rdata-saved/dds.f.RDa")
 ## extract gene names, it will be used instead of assayed.genes
 expressed.genes <- sort(rownames(dds.f))
 
+## save expressed.genes to file for checking duplication in UP - NAM mapping
+# it is for checking usage of GO annotation from UniProt (file `input-data/go/00-GO-and-mapping-UniProt.qmd`)
+write.table(expressed.genes, file="../results/go/expressed_genes_samALLsig.txt", col.names=FALSE, row.names=FALSE, quote=FALSE)
+
 ## select respective values from length.vec
 expr.length.vec <- length.vec[names(length.vec) %in% expressed.genes]
 
