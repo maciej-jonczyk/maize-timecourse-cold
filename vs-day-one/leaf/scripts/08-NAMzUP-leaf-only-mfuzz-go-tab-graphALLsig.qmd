@@ -1,0 +1,393 @@
+---
+title: "GO analysis for expression changes in leaf in cold - ALL significant genes"
+format: html
+date: "2025-12-14"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+## Rationale
+This script uses GO-annotation and associated files from UniProt, prepared in `../../../input-data/go-uniprot/00-test-filter.qmd` and `../../../input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd`.
+Here option 1) using NAM - GO is realized
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/leaf/scripts")
+```
+
+```{r}
+#| eval: false
+#| output: false
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+# Clean working directory
+rm(list=ls())
+```
+
+## Files for GO analysis
+
+Computation of median transcript length
+
+```{r median length}
+#| message: false
+
+df <- read.table("../../../input-data/go-uniprot/tran2gene2length", header = FALSE, col.names = c("ID", "Value"))
+
+library(dplyr)
+
+medians <- df |>
+  group_by(ID) |>
+    summarise(med = round(median(Value)))
+
+# create list of genes and list of lengths
+assayed.genes <- medians[[1]]
+
+length.vec <- setNames(medians[[2]], medians[[1]])
+length.vec <- setNames(as.integer(length.vec), names(length.vec))
+
+# read GO categories
+
+expr.go.cats=read.table("../../../input-data/go-uniprot/leaf.pop", header = FALSE, stringsAsFactors = FALSE)
+
+# clean up
+rm(df, medians)
+
+```
+
+Files for GO analysis - whole transcriptome
+| object | description |
+| --- | --- |
+| `assayed.genes` | all known maize genes (from `gff`) |
+| `length.vec` | median length of each gene in `assayed.genes` |
+| `expr.go.cats` | GO categories for expressed genes | made in `../../../input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd` and `../../../input-data/go-uniprot/00-test-filter.qmd` file |
+
+:::{.callout-note}
+These files are valid for a given genome annotation (genes in `gff` file), GO annotation version and Experiment.
+:::
+
+
+### Preparing files
+
+```{r expressed}
+# selection of expressed genes from each of three above objects is needed
+
+library(DESeq2)
+
+## load filtered object (after minimal counts filter and DESeq function)
+load("../rdata-saved/dds.f.RDa")
+
+## extract gene names, it will be used instead of assayed.genes
+expressed.genes <- sort(rownames(dds.f))
+
+## save expressed.genes to file for checking duplication in UP - NAM mapping
+# it is for checking usage of GO annotation from UniProt (file `input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd`)
+write.table(expressed.genes, file="../results/go/expressed_genes_leafALLsig.txt", col.names=FALSE, row.names=FALSE, quote=FALSE)
+
+## select respective values from length.vec
+expr.length.vec <- length.vec[names(length.vec) %in% expressed.genes]
+
+# to avoid mistakes - remove objects for whole transcriptome
+rm(assayed.genes, length.vec)
+```
+
+Load the data from the mfuzz analysis for given number of clusters and fuzziness (computed in `07-leaf-only-mfuzzALLsig.qmd`)
+
+```{r load data}
+#| message: false
+
+# Change file appropriately
+load("../rdata-saved/mfuzz_c13_m1.35_leafALLsig.RDa")
+
+# genes_in_clusters object is needed (contain genes with mem >=0.7)
+```
+
+## GO analysis
+
+Using `goseq` package [@youngGeneOntologyAnalysis2010]
+
+### Create a vector of significant genes
+
+```{r create vector lapply}
+result.v <- lapply(genes_in_clusters, function(obj) as.integer(expressed.genes %in% obj))
+
+give_names <- function(x) {
+  names(x) <- expressed.genes
+  return(x)
+}
+
+result.v.named <- lapply(result.v, give_names)
+
+```
+
+### Fitting the Probability Weighting Function (PWF)
+
+```{r pwf lapply}
+#| echo: false
+#| message: false
+library(goseq)
+# create vectors
+
+result.pwf <- lapply(result.v.named, function(obj) nullp(obj, bias.data=expr.length.vec, plot.fit=FALSE))
+
+```
+
+```{r plots lapply}
+#| warning: false
+lapply(result.pwf, function(obj) plotPWF(obj, main="PWF"))
+```
+
+### Test
+
+```{r goseq lapply}
+#| message: false
+#| output: false
+
+# list of names
+# goseq
+
+## result tables
+result.goseq <- lapply(result.pwf, function(obj) goseq(obj, gene2cat=expr.go.cats, method="Wallenius", use_genes_without_cat=FALSE))
+
+## Adjust p-values with BH method, list of vectors with significant GOs
+result.bh <- lapply(result.goseq, function(obj) obj$category[p.adjust(obj$over_represented_pvalue, method="BH")<.05])
+
+```
+
+The aim of the following code is to retrieve significant GOs along with numerical data used for test.
+This data is planned for use in an article like in @sobkowiakMolecular2016
+
+## Data extraction
+
+The `result.goseq` list contain numDEInCat (*Study Term*) and numInCat (*Pop Term*).
+We need to add *Study Total* and *Pop Total*.
+
+## Total number of genes with GO annotation (*Pop Total*)
+
+This number is retrieved from `expr.go.cats` object
+
+```{r Pop Total}
+
+length(unique(expr.go.cats$V1))
+
+# 21008
+
+```
+
+## Determining *Study Total*
+
+Total number of genes with GO annotation in a given cluster (after filtering for membership >= 0.7).
+
+### Processing all files in loop
+
+```{r Study Total lapply}
+
+# wektor dopuszczonych genów
+annotated_genes <- unique(expr.go.cats$V1)
+
+# nowa lista – zachowujemy tylko te geny, które są w annotated_genes
+genes_in_clusters_GO <- lapply(genes_in_clusters, function(vec) vec[ vec %in% annotated_genes ])
+
+result.sumgo <- lapply(genes_in_clusters_GO, length)
+
+# 1. Remove original GO-columns (they are added by goseq and are not complete) and add info extracted from go.obo used in all analyses.
+
+col_to_remove <- c("under_represented_pvalue", "term", "ontology")
+
+# usuń te kolumny ze wszystkich elementów listy result.goseq
+result.goseq2 <- lapply(result.goseq, function(df) {
+  # znajdź nazwy, które istnieją zarówno w df, jak i w col_to_remove
+  cols_to_delete <- intersect(col_to_remove, names(df))
+  
+  # jeśli są takie kolumny, usuń je
+  df[cols_to_delete] <- NULL   # alternatywnie: df[, cols_present] <- NULL
+  
+  df   # zwróć zmodyfikowaną ramkę danych
+})
+
+## Read GO-name-namespace file
+
+go_terms_names <- read.table("../../../input-data/go-uniprot/GO_terms_names.txt", header = FALSE, stringsAsFactors = FALSE, sep = '\t', quote = "")
+colnames(go_terms_names) <- c("category", "name", "namespace")
+
+## Add GO names and namespace to each data frame in padj005
+library(dplyr)
+
+result.goseq25 <- lapply(result.goseq2, function(df) {
+left_join(
+  df,
+  go_terms_names,
+  by = "category",
+  copy = FALSE
+)
+}
+)
+
+# 2. Add column from list result.sumgo to each df in result.goseq25
+
+# ---- Add vector as new column ------------
+# use Map – function gets two arguments
+add_constant_column <- function(df, val, col_name = "StudyTotal") {
+  # repeat value so length = number of rows
+  df[[col_name]] <- rep(val, nrow(df))
+  df
+}
+
+result.goseq3 <- Map(add_constant_column, result.goseq25, result.sumgo,
+                     MoreArgs = list(col_name = "StudyTotal"))
+
+# 3. Add Pop Total
+
+poptotal = length(unique(expr.go.cats$V1))
+col_name = "PopTotal"
+
+result.goseq4 <- lapply(result.goseq3, function(df) {
+  df[[col_name]] <- rep(poptotal, nrow(df))  # duplicate to match number of rows
+  df                                            # return modified df
+})
+
+# 4. Adjust p-value
+
+add_BH_adj <- function(df) {
+  df$p_adj_BH <- p.adjust(df$over_represented_pvalue, method = "BH")
+  df
+}
+
+result.goseq_adj <- lapply(result.goseq4, add_BH_adj)
+
+## Check - only categories with p < 0.05
+padj005 <- lapply(result.goseq_adj, function(df) subset(df, p_adj_BH < 0.05))
+
+
+# remove empty elements of list (not having significant GOs)
+result_filt <- Filter(function(x) {
+  # retain elements with at least 1 row
+  inherits(x, "data.frame") && nrow(x) > 0
+}, padj005)
+
+## Rearrange columns
+
+result_clean <- lapply(result_filt, function(df) {
+  df[, c("category", "name", "namespace",
+         "numDEInCat", "numInCat", "StudyTotal",
+          "PopTotal",
+         "over_represented_pvalue", "p_adj_BH")]
+})
+
+```
+
+```{r save-for-09}
+save(result.goseq, result.goseq25, result_clean, expr.go.cats, file="../rdata-saved/NAMzUP_mfuzz_res_for09_leafALLsig.RDa")
+```
+
+# GO trees
+
+```{bash mkdir}
+# refresh dir for results
+
+rm -r ../results/go/graphs/clusters/
+
+mkdir -p ../results/go/graphs/clusters/all_cats/
+```
+
+```{r export-summary}
+# export summary tables (with proportion of genes from category) with significant GOs to files
+for (nm in names(result_clean)) {
+  vec <- result_clean[[nm]]
+
+  # file name – eg. "Klaster_13.txt"
+  fname <- paste0("../results/go/graphs/clusters/all_cats/NAMzUP_", gsub(" ", "_", nm), "summary.txt")
+
+  write.table(vec,
+              file = fname,
+              col.names = TRUE,
+              row.names = FALSE,
+              quote = FALSE,
+              sep='\t')
+}
+```
+
+```{r export}
+# export vectors with significant GOs to files
+for (nm in names(result_clean)) {
+  vec <- result_clean[[nm]][["category"]]
+
+  # file name – eg. "Klaster_13.txt"
+  fname <- paste0("../results/go/graphs/clusters/all_cats/NAMzUP_", gsub(" ", "_", nm), ".txt")
+
+  write.table(vec,
+              file = fname,
+              col.names = FALSE,
+              row.names = FALSE,
+              quote = FALSE,
+              sep='\t')
+}
+```
+
+```{bash split cats}
+# split summary files by cluster and category
+
+rm -r ../results/go/graphs/clusters/{bp,cc,mf}/
+
+mkdir -p ../results/go/graphs/clusters/{bp,cc,mf}/
+
+cd ../results/go/graphs/clusters/all_cats/
+
+sample_names=($(ls *[0-9].txt))
+
+for sample in ${sample_names[@]}
+do
+grep -f ../../../../../../../input-data/go-uniprot/GO_BP_descendants.txt ${sample} > ../bp/${sample}.bp
+grep -f ../../../../../../../input-data/go-uniprot/GO_CC_descendants.txt ${sample} > ../cc/${sample}.cc
+grep -f ../../../../../../../input-data/go-uniprot/GO_MF_descendants.txt ${sample} > ../mf/${sample}.mf
+done
+```
+
+```{bash rm empty}
+find ../results/go/graphs/ -type f -empty -delete
+```
+
+Using [goatools](https://github.com/tanghaibao/goatools/blob/main/doc/md/README_go_plot.md#six-different-colored-go-terms-without-relationships) [@klopfensteinGOATOOLSPythonLibrary2018]
+
+```{bash draw}
+
+rm -r ../results/go/graphs/clusters/png/{bp,cc,mf}/
+
+mkdir -p ../results/go/graphs/clusters/png/{bp,cc,mf}/
+
+cd ../results/go/graphs/clusters/bp/
+
+sample_names=($(ls *))
+
+for sample in ${sample_names[@]}
+do
+go_plot.py --obo=../../../../../../../input-data/go-uniprot/source-files/go.obo --go_file=${sample} --outfile=../png/bp/${sample}.png
+done
+
+cd ../cc
+
+sample_names=($(ls *))
+
+for sample in ${sample_names[@]}
+do
+go_plot.py --obo=../../../../../../../input-data/go-uniprot/source-files/go.obo --go_file=${sample} --outfile=../png/cc/${sample}.png
+done
+
+cd ../mf
+
+sample_names=($(ls *))
+
+for sample in ${sample_names[@]}
+do
+go_plot.py --obo=../../../../../../../input-data/go-uniprot/source-files/go.obo --go_file=${sample} --outfile=../png/mf/${sample}.png
+done
+```
+
+## References
