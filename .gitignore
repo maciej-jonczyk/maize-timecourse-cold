@@ -3,7 +3,18 @@ scripts-old/
 
 # files not to share
 other-files/
-input-data/
+# 1. Nie ignoruj samego katalogu – pozwól Gitowi wejść do środka
+!input-data/
+
+# 2. Ignoruj wszystko w katalogu (domyślne zachowanie)
+input-data/**
+
+# 3. Od‑ignoruj (uwzględnij) wszystkie podkatalogi pierwszego poziomu,
+#    żeby Git mógł zajrzeć do ich wnętrza
+!/input-data/*/
+
+# 4. Teraz od‑ignoruj (uwzględnij) pliki .qmd w tych podkatalogach
+!/input-data/*/*.qmd
 **/rdata-saved/
 **/results/
 **/plot*
@@ -19,6 +30,7 @@ input-data/
 **/.RData
 **/.Rhistory
 **/.RDataTmp
+rozne-pliki/
 
 # rubbish
 **/poziomy-filtrzcji
@@ -27,3 +39,4 @@ input-data/
 **/zestawienie\ GO\ na\ plakat_mj.xlsx
 .Rproj.user
 **/*add0*
+

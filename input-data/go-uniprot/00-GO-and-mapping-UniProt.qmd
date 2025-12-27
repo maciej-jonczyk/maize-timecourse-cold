@@ -1,0 +1,467 @@
+---
+title: "Use UniProt data only for GO, networks and description"
+format: html
+date: "2025-12-06"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+The aim of this code is to
+1. Use GO annotation from UniProt for enrichment.
+2. Retrieve from GO annotation file NAM - UP mapping for data retrieval from STRING database.
+3. Retrieve gene descriptions from UniProt.
+
+:::{.callout-important}
+Code from this file is run in `go-uniprot` directory.
+:::
+
+:::{.callout-note}
+There are also annotation from NCBI but it uses geneindex IDs which are unconvenient and their file has less annotations.
+Some comparisons of MaizeGAMER (used previously) UniProt and NCBI contents are in `10-SAM-networks-cytoscape.qmd` file.
+:::
+
+Consequently all annotation components will be congruent.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/input-data/go")
+```
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+## Download and look at the GO-annotation file
+
+```{bash GO-anno}
+# transform best-nam-string-ids to sed file
+
+# retrieve file (on 2025-11-28)
+wget https://ftp.ebi.ac.uk/pub/databases/GO/goa/proteomes/272950.Z_mays_1.goa
+mv 272950.Z_mays_1.goa source-files/
+
+## stats
+## how many unique proteins
+grep -Fv '!' source-files/272950.Z_mays_1.goa | cut -f2 | sort -u | wc -l
+# 44701
+
+## how many GO-terms
+grep -Fv '!' source-files/272950.Z_mays_1.goa | cut -f5 | sort -u | wc -l
+# 5191
+
+# There are no UP - NAM mapping in GO-file
+
+# Download mapping files, they are big so destination is HOME
+cd ~
+wget https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/idmapping_selected.tab.gz
+wget https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/idmapping.dat.gz
+mv idmapping* source-files/
+```
+
+```{bash gaf}
+# Modify gene annotation file from UniProt - add NAMs
+# retrieve all UP-NAM pairs from "dat" file
+# It'll contain genes, transcripts and proteins
+zgrep -F Zm00001 /media/mj/Expansion/idmapping.dat.gz > source-files/UPs_NAMs_all_dat
+
+################ Important file #################
+
+# leave only UP and NAM data
+awk -v FS='\t' -v OFS='\t' '$2=="EnsemblGenome" {print $1,$3}' source-files/UPs_NAMs_all_dat | sort -u > UP-NAM-clean
+
+#################################################
+
+# count unique NAMs
+sort -k2,2 -t $'\t' -u UP-NAM-clean | wc -l
+# 39756
+# ALL NAMs have protein accession
+
+# count all unique rows
+wc -l UP-NAM-clean
+# 63665 UP-NAM-clean
+
+# count unique UPs
+sort -k1,1 -t $'\t' -u UP-NAM-clean | wc -l
+# 62556
+
+# How many duplicated UPs
+cut -f1 UP-NAM-clean | sort | uniq -dc | wc -l
+# 503
+
+# check NAMs for UPs with duplication, three random entries
+cut -f1 UP-NAM-clean | sort | uniq -dc | shuf -n3
+#      2 K7VEJ7
+#      2 A0A1D6I283
+#      9 P69246
+
+# how many NAMs with >1 UP?
+cut -f2 UP-NAM-clean | sort | uniq -dc | wc -l
+# 12924
+
+# There is some duplication, some UPs match multiple NAMs (those giving THE SAME protein)
+# it is not problem in GO but it must be CHECKED in NETWORKS as genes for one UP could belong to different clusters and network is based on UPs
+
+# Process goa file
+# sort data lines by UP
+tail -n +5 source-files/272950.Z_mays_1.goa | sort -k2,2 -t $'\t' > xgoa_srt
+
+# join and rearrange columns
+join -1 1 -2 2 -t $'\t' -o2.1,1.2,0,2.3,2.4,2.5,2.6,2.7,2.8,2.9,2.10,2.11,2.12,2.13,2.14,2.15,2.16,2.17 UP-NAM-clean xgoa_srt > in_making.goa
+
+# check number of UPs
+# joined
+sort -k3,3 -t $'\t' -u in_making.goa| wc -l
+# 44171
+# this number has NAM and GO annotation
+
+# orginal goa
+cut -f2 -d $'\t' xgoa_srt | sort -u | wc -l
+# 44701
+# this number has GO annotation
+
+# Why less after joining?
+# Check if all UPs from original goa have NAMs in "dat"
+# UPs in original file
+cut -f2 xgoa_srt | sort -u > x
+wc -l x
+# 44701
+# UPs in "dat" file
+cut -f1 UP-NAM-clean | sort -u | wc -l
+# 62556
+# select UPs present in original goa from "dat" file
+grep -Fwf x UP-NAM-clean > x2
+# unique UPs
+sort -k1,1 -t $'\t' -u x2 | wc -l
+# 44171
+
+# check using left join
+join -1 1 -2 2 -t $'\t' -a2 -o auto UP-NAM-clean xgoa_srt > x
+# select only those without NAM and count unique
+awk -F'\t' -v OFS='\t' '$2==""' x | sort -k1,1 -t $'\t' -u | wc -l
+# 530
+# compare with difference
+expr 44701 - 44171
+# 530
+
+# NOT all UPs with GO have NAM
+
+# unique UP-NAM pairings
+cut -f2,3 -d $'\t' in_making.goa | sort -u | wc -l
+# 44701
+
+# How many NAMs annotated
+cut -f2 -d $'\t' in_making.goa | sort -u | wc -l
+# 26824
+
+# For comparison, this from MaizeGAMER has
+zcat ../go/3.1_B73v5.MaizeGDB.CLEANED.gaf.gz | cut -f2 | tail -n +3 |sort -u | wc -l
+# 39756
+# what gives 1/3 more NAMs but with lower quality annotations
+
+# How many UPs annotated
+cut -f3 -d $'\t' in_making.goa | sort -u | wc -l
+# 44171
+
+# NAMs with > 1 UP
+cut -f2,3 -d $'\t' in_making.goa | sort -u | cut -f1 | uniq -d > xduplicatedNAMs
+# how many
+wc -l xduplicatedNAMs
+# 9746 xduplicatedNAMs
+
+# check their annotations
+grep -Ff xduplicatedNAMs in_making.goa | sort -k2,2 -t $'\t' > xduplicatedNAMs_annotations
+
+# It is an effect of different proteins from different transcripts for the same gene or sometimes different genes giving the same protein
+
+```
+
+```{bash check contents}
+## Check UP - NAM pairing in in_making.goa vs file from UniProt
+# make file with strings to search
+
+# Split 8th field by ; to have one NAM per line
+
+awk -F'\t' -v OFS='\t' '
+{
+    n = split($8, arr, /;/)   # podziel $8 po ";", wynik w tablicy arr[1..n]
+
+    # Dla każdego elementu wypisz cały wiersz, ale z jedną wartością w kolumnie 3
+    for (i = 1; i <= n; i++) {
+        $8 = arr[i];
+        print
+    }
+}
+' <(zcat source-files/uniprotkb_organism_id_4577_2025_12_02.tsv.gz) > uniprot_NAMs_split
+
+## check for ALL NAM - UP pairs
+# Make file with patterns to search
+awk -F'\t' -v OFS='\t' '{print $3".+"$2"[^_]"}' in_making.goa | sort -u > x
+# search
+zgrep -Eof x uniprot_NAMs_split | sort -u | wc -l
+# 44701
+
+# which equal number of unique proteins in original GO file 
+grep -Fv '!' source-files/272950.Z_mays_1.goa | cut -f2 | sort -u | wc -l
+# 44701
+
+# In uniprot_NAMs_split there are also all NAMs
+grep -Ewo 'Zm00001eb[0-9]{6}' uniprot_NAMs_split | sort -u | wc -l
+# 39756
+```
+
+```{bash UPs in STRING}
+
+################ Important file used further ###################
+
+# Are all UPs from goa in STRING database?
+cut -f3 -d $'\t' in_making.goa | sort -u > UPinGOA
+
+################################################################
+
+# how many?
+wc -l UPinGOA 
+# 44171 UPinGOA
+
+################ Important file used further ###################
+
+# UPs from STRING
+zcat ../networks/full-network.gz | cut -f1 -d' ' | tail -n +2 | sort -u > UPinSTRING
+
+################################################################
+
+# check
+grep -Ff UPinGOA UPinSTRING | wc -l
+# 12698
+# Only!
+```
+
+## Prepare GO with category names and split GO-hierarchy into three classes in R
+
+```{r split-GO}
+library(ontologyIndex)
+
+# read obo file
+go <- get_ontology("../go-uniprot/source-files/go.obo", extract_tags = "everything")
+
+# get descendants of the Biological Process, Molecular Function and Cellular Component terms
+bp_descendants <- get_descendants(go, "GO:0008150")
+mf_descendants <- get_descendants(go, "GO:0003674")
+cc_descendants <- get_descendants(go, "GO:0005575")
+
+# save to files, needed for graph drawing with go_plot.py
+write(bp_descendants, file = "GO_BP_descendants.txt")
+write(mf_descendants, file = "GO_MF_descendants.txt")
+write(cc_descendants, file = "GO_CC_descendants.txt")
+
+length(bp_descendants)
+# 25153
+length(mf_descendants)
+# 10143
+length(cc_descendants)
+# 4058
+# What is congruent with https://www.geneontology.org/stats.html (release 2025-10-10)
+
+# Extract names of all GO terms
+# Add namespace which is a listing BP, MF and CC
+
+# Wydobycie id, name i namespace
+id <- go$id
+name <- go$name
+namespace <- go$namespace
+
+# Konwersja do data frame jeśli potrzebujesz
+ontology_data <- data.frame(id = id, name = name, stringsAsFactors = FALSE)
+ontology_data$namespace <- I(namespace)  # Użycie I() do zachowania struktury listy
+# Przypisanie namespace jako wektor
+ontology_data$namespace <- unlist(ontology_data$namespace)
+
+# save to file
+write.table(ontology_data, file = "GO_terms_names.txt", sep = "\t", row.names = FALSE, col.names=FALSE, quote = FALSE)
+
+```
+
+Return to `bash`
+
+```{bash clean ontology}
+
+# Remove not needed rows
+awk -F'\t' -v OFS='\t' '$3!="external"' GO_terms_names.txt > x && mv x GO_terms_names.txt
+wc -l GO_terms_names.txt
+# 48196 GO_terms_names.txt
+
+# What equals Valid plus Obsolete from https://www.geneontology.org/stats.html (release 2025-10-10)
+expr 39354 + 8842
+# 48196
+
+# Check with number of GO-terms from go.obo
+grep -Eo 'GO:[0-9]{7}' GO_terms_names.txt | sort -u | wc -l
+# 48196
+
+################ Important file used further ###################
+
+# Remove problematic symbols, preventing reading in R
+tr -d '#' < GO_terms_names.txt > x && mv x GO_terms_names.txt
+
+################################################################
+```
+
+:::{.callout-caution}
+Move to `OO-test-filter.qmd` file for extracting best UP fo each NAM.
+:::
+
+## Prepare gene descriptions
+
+```{bash funct anno, best UP}
+# Extract UPs from BEST_UPs
+cut -f1 BEST_UPs | sort -u > best_UPs_list
+# 38698 uniquwe UPs, 39756 NAMs in total
+
+# grep UPs from uniprot file and make file with UP - description
+cut -f1,4 -d $'\t' uniprot_NAMs_split | sort -u > x
+
+################ Important file used further ###################
+
+grep -Fwf best_UPs_list x > UP_descr_best
+
+################################################################
+
+# How many don't have description?
+grep 'Uncharacterized protein' UP_descr_best | wc -l
+# 9040
+
+# This file is correct for all experiments
+```
+
+## Population files
+
+```{bash population files}
+
+# GO-enrichment could be done on the Gene or Protein level.
+# Gene level is simpler - require less script tuning
+# 1) Gene level disregards problem of multiple NAMs for one UP
+# 2) Protein level - remove duplicated UPs for multiple NAMs but still
+# requires to check in scripts if multiple NAMs for one UP are in the same cluster.
+# Moreover - more script tuning.
+
+
+# Prepare file for extraction of GO-annotation from in_making.goa
+awk -F'\t' -v OFS='\t' '{print $2,$1}' BEST_UPs > NAM2UP_all_forGOextraction
+
+# Extract GO-annotation for selected NAMs from in_making_SAM.goa
+grep -Ff NAM2UP_all_forGOextraction in_making.goa > GO_annotation_all_best.goa
+
+## CHECK. Change 2nd tab to _ to check selection
+sed 's/\t/_/2' in_making.goa > x
+sed 's/\t/_/' NAM2UP_all_forGOextraction > x2
+# select
+grep -Fwf x2 x > x3
+
+## compare to original file
+wc -l GO_annotation_all_best.goa x3
+#  183228 GO_annotation_all_best.goa
+#  183228 x3
+sed 's/_/\t/' x3 > x4
+
+diff -s GO_annotation_all_best.goa x4
+# Pliki GO_annotation_all_best.goa i x4 są identyczne
+# OK
+
+## For further analyses ID - GO file is needed.
+
+################ Important file used further ###################
+
+# For option 1) NAM - GO
+cut -f2,6 GO_annotation_all_best.goa | sort -u > NAM2GO_all_4making_pop
+sort -k1,1 -t $'\t' -u NAM2GO_all_4making_pop  | wc -l
+# 26758 unique NAMs
+sort -k2,2 -t $'\t' -u NAM2GO_all_4making_pop  | wc -l
+# 5069 unique GO-annotations
+
+################################################################
+
+############# Make population for both tissues ##########################
+
+grep -Fwf ../../vs-day-one/sam/results/go/expressed_genes_samALLsig.txt NAM2GO_all_4making_pop > SAM.pop
+grep -Fwf ../../vs-day-one/leaf/results/go/expressed_genes_leafALLsig.txt NAM2GO_all_4making_pop > leaf.pop
+
+#########################################################################
+
+## How many genes have GO?
+# SAM
+wc -l ../../vs-day-one/sam/results/go/expressed_genes_samALLsig.txt
+# 31867 expressed NAMs
+sort -k1,1 -t $'\t' -u SAM.pop | wc -l
+# 22547 NAMs have GO
+
+# leaf
+wc -l ../../vs-day-one/leaf/results/go/expressed_genes_leafALLsig.txt
+# 29074 expressed NAMs
+sort -k1,1 -t $'\t' -u leaf.pop | wc -l
+# 21008 NAMs have GO
+
+# # For option 2) UP - GO
+# cut -f3,6 GO_annotation_all_best.goa | sort -u > UP2GO_all_4making_pop
+# 
+# # Check if it is congruent with filtering for SAM
+# grep -Fwf ../../vs-day-one/sam/results/go/expressed_genes_samALLsig.txt NAM2GO_all_4making_pop > x
+# wc -l x
+# # 122540 x
+# wc -l NAM2GO_SAM_pop
+# # 122795 NAM2GO_SAM_pop
+# expr 122795 - 122540
+# # 255 less rows in goa for SAM after selection for all NAMs!
+# 
+# # Check number of GOs
+# sort -k2,2 -t $'\t' -u x | wc -l
+# # 5049
+# sort -k2,2 -t $'\t' -u NAM2GO_SAM_pop | wc -l
+# # 5056
+# # 7 less GO-annotations for SAM after selection for all NAMs!
+```
+
+## GO and gene description file
+
+```{bash GO-opis-gen-opis}
+cd ../go-uniprot
+# GO - description - NAM is always present, if available gene description is included
+# This file is valid for all experiments
+
+# make file with NAM - description from UP - description and NAM-UP mapping
+
+sort -k2,2 -t $'\t' NAM2UP_all_forGOextraction > x1
+join -1 2 -2 1 -t $'\t' x1 UP_descr_best | sort -k2,2 -t $'\t' > x
+
+## make file with NAM - GO - description
+sort -k2,2 -t $'\t' NAM2GO_all_4making_pop > x2
+
+# join with descriptions
+join -1 2 -2 1 -t $'\t' x2 GO_terms_names.txt | sort -k2,2 -t $'\t'> x3
+
+################ Important files used further ##################
+
+# join with NAM - description and rearrange columns
+join -j2 -t $'\t' -o1.1,1.3,0,2.3 x3 x | sort -u > GO_descr_NAM_descr
+
+# make NAM - description
+join -1 2 -2 1 -t $'\t' x1 UP_descr_best | sort -k2,2 -t $'\t' > x
+cut -f2- -d $'\t' x > NAM_descr_best
+
+# NAM - UP - description, needed for 10-...qmd
+join -j1 -t $'\t' NAM2UP_all_forGOextraction NAM_descr_best | sort -k2,2 -t $'\t' > NAM-UP-anno
+
+################################################################
+```
+
+## References

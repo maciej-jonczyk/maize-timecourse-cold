@@ -373,7 +373,7 @@ pigz --best c10_net_allcl
 This is important, otherwise only genes with direct annotation would be selected.
 :::
 
-```{r split-GO}
+```{r descendants}
 # The category files from this chunk are universal
 library(ontologyIndex)
 

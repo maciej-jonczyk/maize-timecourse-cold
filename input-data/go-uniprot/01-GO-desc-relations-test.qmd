@@ -1,0 +1,94 @@
+---
+title: "Retrieve GO descendants with a given relations"
+format: html
+date: "2025-12-18"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  engine: python
+  echo: true
+---
+
+## Extract descendants
+
+Using [goatools](https://github.com/tanghaibao/goatools/blob/copilot/get-all-descendants-for-relations/notebooks/children_and_descendants.ipynb) code.
+This complements *r descendants* chunk from [10-NAMzUP-SAM-networks-cytoscape-loop.qmd](../../vs-day-one/sam/scripts/10-NAMzUP-SAM-networks-cytoscape-loop.qmd)
+
+Information about main relations are presented in [GO docs](https://www.geneontology.org/docs/ontology-relations/).
+
+```{python obo}
+import os
+from goatools.obo_parser import GODag
+
+# Load GO DAG and all the optional relationships,
+# like 'regulates' and 'part_of'
+godag = GODag('source-files/go.obo',
+              optional_attrs={'relationship'})
+```
+
+### Check for *is_a* descendants
+
+```{python go-id}
+GO_ID = 'GO:0003700' # DNA-binding transcription factor activity
+goterm = godag[GO_ID]
+```
+
+```{python is_a}
+
+# test - should be the same as obtained with wr_hier and get_descendants from ontologyIndex R package
+
+# Using GOTerm method
+descendants_isa = goterm.get_all_children()
+tf_desc_isa = '{GO} descendants (is_a): {D}'.format(
+    GO=GO_ID,
+    D=sorted(descendants_isa))
+```
+
+```{python txt}
+# Save to text file
+with open('tf_desc_isa.txt', 'w') as f:
+    f.write(tf_desc_isa)
+```
+
+```{bash diff}
+# Extract GOs
+grep -Eo 'GO:[0-9]{7}' tf_desc_isa.txt > xisa
+
+# compare with results after get_descendants from ontologyIndex R package
+diff -s <(sort tran-fac_descendants.txt) <(sort xisa)
+# Pliki /dev/fd/63 i /dev/fd/62 są identyczne
+```
+
+### Extract descendants including other relations
+
+```{python regulates part_of}
+# Get all descendants including 'regulates' and 'part_of' relationships
+optional_relationships = {"part_of", "regulates"}
+
+from goatools.godag.go_tasks import get_go2descendants
+
+go2descendants_partof = get_go2descendants(godag.values(), optional_relationships)
+tf_desc_3rel = '{GO} descendants (is_a + part_of + regulates): {D}'.format(
+    GO=GO_ID,
+    D=sorted(go2descendants_partof.get(GO_ID, set())))
+    
+# Save to text file
+with open('tf_desc_3rel.txt', 'w') as f:
+    f.write(tf_desc_3rel)
+```
+
+```{bash GO-list}
+# List of GOs for check in GO-websites
+grep -Eo 'GO:[0-9]{7}' tf_desc_3rel.txt > x3rel
+
+# Get unique GOs (not in is_a only)
+grep -Fvf xisa x3rel > x3uniq
+# Get shared GOs
+grep -Ff xisa x3rel > x3share
+
+# Convert to json (advanced format for https://amigo.geneontology.org/visualize?mode=client_amigo)
+bash go-list2json2.sh x3share x3uniq
+
+```
+
+Verification on plots from [GO website](https://amigo.geneontology.org/amigo/visualize?mode=client_amigo) and [QuickGO](https://www.ebi.ac.uk/QuickGO/) confirms correctness of the obtained results.
+

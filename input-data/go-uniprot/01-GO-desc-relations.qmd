@@ -1,0 +1,100 @@
+---
+title: "Retrieve GO descendants with a given relations"
+format: html
+date: "2025-12-20"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  engine: python
+  echo: true
+---
+
+## Extract descendants
+
+Using [goatools](https://github.com/tanghaibao/goatools/blob/copilot/get-all-descendants-for-relations/notebooks/children_and_descendants.ipynb) code.
+This complements *bash descendants* chunk where only *is_a* relations could be extracted ([10-NAMzUP-SAM-networks-cytoscape-loop.qmd](../../vs-day-one/sam/scripts/10-NAMzUP-SAM-networks-cytoscape-loop.qmd))
+
+Information about main relations are presented in [GO docs](https://www.geneontology.org/docs/ontology-relations/).
+
+
+```{python obo}
+import os
+from goatools.obo_parser import GODag
+
+# Load GO DAG and all the optional relationships,
+# like 'regulates' and 'part_of'
+godag = GODag('source-files/go.obo',
+              optional_attrs={'relationship'})
+```
+
+### Extract descendants for GIVEN category
+
+:::{.callout-caution}
+Value in `GO_ID` should be changed to the GO term of interest.
+Similarly, name in `shell` chunk at the end of the document should be changed accordingly.
+:::
+
+```{python category}
+#### CHANGE GO id ####
+
+#GO_ID = 'GO:0003700' # DNA-binding transcription factor activity
+#GO_ID = 'GO:0032502' # developmental process
+#GO_ID = 'GO:0015979' # photosynthesis
+GO_ID = 'GO:0048511' # rhythmic process
+
+######################
+
+goterm = godag[GO_ID]
+
+# IS_A descendants
+# Using GOTerm method
+descendants_isa = goterm.get_all_children()
+desc_isa = '{GO} descendants (is_a): {D}'.format(
+    GO=GO_ID,
+    D=sorted(descendants_isa))
+
+# Save to text file
+with open('desc_isa.txt', 'w') as f:
+    f.write(desc_isa)
+
+# OTHER
+# Get descendants including 'is_a', 'regulates' and 'part_of' relationships
+optional_relationships = {"part_of", "regulates"}
+
+from goatools.godag.go_tasks import get_go2descendants
+
+desc_other = get_go2descendants(godag.values(), optional_relationships)
+desc_3rel = '{GO} descendants (is_a + part_of + regulates): {D}'.format(
+    GO=GO_ID,
+    D=sorted(desc_other.get(GO_ID, set())))
+    
+# Save to text file
+with open('desc_3rel.txt', 'w') as f:
+    f.write(desc_3rel)
+```
+
+```{bash}
+#### CHANGE name ####
+# This script prepares json file with different coloring for is_a and two others relations for advanced visualization in https://amigo.geneontology.org/visualize?mode=client_amigo.
+# A the same time it produces column with GO ids (rel3_${name}.txt) for further use in bash descendants chunk.
+bash go-list2json3.sh rhythm
+#####################
+```
+
+### Extract from `NAM2GO_all_4making_pop`
+
+```{bash descendants}
+# The category files from this chunk are universal
+# NAMs with selected GOs
+
+cd ../../../input-data/go-uniprot/
+
+for i in tf_activ dev photosyn rhythm; do
+
+# DNA transcription-factor activity
+grep -Fwf rel3_${i}.txt NAM2GO_all_4making_pop | cut -f1 -d $'\t' | sort -u > rel3-genes-${i}
+
+done
+
+# Header for networks for selected GOs
+#echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" > header-net-tab
+```

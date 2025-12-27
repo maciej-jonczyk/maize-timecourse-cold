@@ -1,0 +1,168 @@
+---
+title: "Select best UniProt ID for each gene (NAM)"
+format: html
+date: "2025-12-05"
+---
+
+:::{.callout-caution}
+This code continues `00-GO-and-mapping-UniProt.qmd`. And *must* be executed if best NAM-UP pairs are not selected already.
+:::
+
+```{bash}
+
+# Prepare file with all unique NAM-UP pairs and indicators for presence in STRING and GOA
+
+# Identify UPs in STRING by adding 1 to 2nd column
+awk -v OFS='\t' '{print $1,"1"}' UPinSTRING > xupinstring
+
+# join with all NAM-UP pairs
+join -j1 -t $'\t' -a1 -o auto UP-NAM-clean xupinstring > x3
+
+# Add 0 in 3rd column if there is no 1
+rm x31
+awk -F'\t' -v OFS='\t' '$3 == 1 { print $0 >> "x31" } $3 != 1 { print $1,$2,"0"  >> "x31" }' x3
+
+# Repeat for UPs having GO
+awk -v OFS='\t' '{print $1,"1"}' UPinGOA > xupingoa
+
+# join with all NAM-UP pairs
+join -j1 -t $'\t' -a1 -o auto x31 xupingoa > x4
+
+rm uniq_NAM_UP_all_ifinSTRING_ifinGO
+awk -F'\t' -v OFS='\t' '$4 == 1 { print $0 >> "uniq_NAM_UP_all_ifinSTRING_ifinGO" } $4 != 1 { print $1,$2,$3,"0"  >> "uniq_NAM_UP_all_ifinSTRING_ifinGO" }' x4
+
+# columns in uniq_NAM_UP_all_ifinSTRING_ifinGO
+# 1. UP
+# 2. NAM
+# 3. if in STRING (1/0)
+# 4. if has GO (1/0)
+
+# how many UPs have GO?
+cut -f4 uniq_NAM_UP_all_ifinSTRING_ifinGO | sort | uniq -c
+#  18964 0
+#  44701 1
+
+# how many UPs are in STRING?
+cut -f3 uniq_NAM_UP_all_ifinSTRING_ifinGO | sort | uniq -c
+#  48520 0
+#  15145 1
+
+# how many UPs have GO and are in STRING?
+cut -f3,4 uniq_NAM_UP_all_ifinSTRING_ifinGO | sort | uniq -c
+#  16688 0       0
+#  31832 0       1
+#   2276 1       0
+#  12869 1       1
+
+## Add protein length
+# downloaded from UniProt on 2025-12-02 (manual Advanced search for all Zea mays (organism) proteins, selecting 4577 taxon and export table to file)
+# uniprotkb_organism_id_4577_2025_12_02.tsv.gz
+# UP with length
+
+# Check columns
+zcat source-files/uniprotkb_organism_id_4577_2025_12_02.tsv.gz | head -n1 | number-columns.sh 
+
+#      1  Entry
+#      2  Reviewed
+#      3  Entry Name
+#      4  Protein names
+#      5  Gene Names
+#      6  Organism
+#      7  Length
+#      8  Gramene
+#      9  Annotation
+
+# Extract: Entry, Reviewed, Length, Annotation score
+
+zcat source-files/uniprotkb_organism_id_4577_2025_12_02.tsv.gz | cut -f1,2,7,9 -d $'\t' | cut -f1 -d'.' | tail -n +2 | sort > UP_rev_length_annoScore
+
+# Join with uniq_NAM_UP_all_ifinSTRING_ifinGO
+join -j 1 -t $'\t' uniq_NAM_UP_all_ifinSTRING_ifinGO UP_rev_length_annoScore > uniq_NAM_UP_all_ifinSTRING_ifinGO_len_annoScore
+
+# columns in uniq_NAM_UP_all_ifinSTRING_ifinGO_len_annoScore
+# 1: UP
+# 2: NAM
+# 3: if in STRING (1/0)
+# 4: if has GO (1/0)
+# 5. reviewed/unreviewed
+# 6: length
+# 7: annotation score
+
+```
+
+## Test various selections
+
+```{bash}
+##################### Maximizing annotation -THIS file will be used further ###########
+
+# Filter on STRING presence > GO presence > reviewed > annotation score > length
+#sort -k2,2 -k3,3nr -k4,4nr -k5,5 -k7,7nr -k6,6nr -t $'\t' uniq_NAM_UP_all_ifinSTRING_ifinGO_len_annoScore | sort -k2,2 -u -t $'\t' > xbest_string_goa_rev
+sort -k2,2 -k3,3nr -k4,4nr -k5,5 -k7,7nr -k6,6nr -t $'\t' uniq_NAM_UP_all_ifinSTRING_ifinGO_len_annoScore | sort -k2,2 -u -t $'\t' > BEST_UPs
+
+# how many UPs are in STRING and have GO?
+cut -f3,4 BEST_UPs | sort | uniq -c
+#  10722 0       0
+#  13912 0       1
+#   2276 1       0
+#  12846 1       1
+
+#######################################################################################
+
+# Most basic, disregarding GO and STRING - first by annotation score then by length
+sort -k2,2 -k7,7nr -k6,6nr -t $'\t' uniq_NAM_UP_all_ifinSTRING_ifinGO_len_annoScore | sort -k2,2 -u -t $'\t' > xbest_basic
+
+# how many UPs are in STRING and have GO?
+cut -f3,4 xbest_basic | sort | uniq -c
+#  11010 0       0
+#  15230 0       1
+#   2018 1       0
+#  11498 1       1
+
+# Filter on STRING presence > GO presence > annotation score > length
+sort -k2,2 -k3,3nr -k4,4nr -k7,7nr -k6,6nr -t $'\t' uniq_NAM_UP_all_ifinSTRING_ifinGO_len_annoScore | sort -k2,2 -u -t $'\t' > xbest_string_goa
+
+# how many UPs are in STRING and have GO?
+cut -f3,4 xbest_string_goa | sort | uniq -c
+#  10722 0       0
+#  13912 0       1
+#   2276 1       0
+#  12846 1       1
+
+diff -s xbest_string_goa xbest_string_goa_rev
+# Pliki xbest_string_goa i xbest_string_goa_rev są identyczne
+
+# So, using 'reviewed' column before 'annotation score' does not change the counts here
+
+# Does using 'reviewed' but no 'anno score' change anything?
+sort -k2,2 -k3,3nr -k4,4nr -k5,5 -k6,6nr -t $'\t' uniq_NAM_UP_all_ifinSTRING_ifinGO_len_annoScore | sort -k2,2 -u -t $'\t' > xbest_string_goa_rev_noscore
+
+# how many UPs are in STRING and have GO?
+cut -f3,4 xbest_string_goa_rev_noscore | sort | uniq -c
+#  10722 0       0
+#  13912 0       1
+#   2276 1       0
+#  12846 1       1
+
+diff xbest_string_goa xbest_string_goa_rev_noscore | wc -l
+# There are differences
+
+diff BEST_UPs xbest_string_goa_rev_noscore | wc -l
+# The same number of differences as above
+
+# Differences basic vs BEST_UPs
+diff xbest_basic BEST_UPs | wc -l
+# Many differences
+
+# Differences vs xbest_string_goa_rev_noscore
+diff xbest_basic xbest_string_goa_rev_noscore | wc -l
+# Even more differences than in above
+
+# Preferred filter on STRING presence > GO presence > reviewed > annotation score > length
+# Justification: we want the protein form present in data used further.
+# Because no data = no possibility to analyze further and we won't annotate proteins ourselves.
+# After all, we select protein form, not gene.
+```
+
+:::{.callout-caution}
+Return to `00-GO-and-mapping-UniProt.qmd` for preparation of files for each analysed dataset (SAM, leaf, ...)
+:::

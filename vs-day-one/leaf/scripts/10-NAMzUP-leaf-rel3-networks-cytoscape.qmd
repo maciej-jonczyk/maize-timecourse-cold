@@ -1,0 +1,131 @@
+---
+title: "Prepare network files for analysis in Cytoscape"
+format: html
+date: "2025-12-20"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+The aim of this code is to prepare files (clustering results and String network data [@szklarczykSTRINGDatabase20232023]) for Cytoscape analysis and visualization [@clineIntegrationBiologicalNetworks2007]. Separately for each cluster.
+Using 0.7 membership cutoff.
+This script uses GO-annotation and associated files from UniProt, prepared in [00-test-filter.qmd](../../../input-data/go-uniprot/00-test-filter.qmd) and [00-GO-and-mapping-UniProt.qmd](../../../input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd).
+Here option 1) using NAM - GO is realized.
+From clusters genes with specific, selected annotations are selected.
+
+:::{.callout-note}
+This script uses cluster files generated in [10-NAMzUP-leaf-networks-cytoscape-loop.qmd](10-NAMzUP-leaf-networks-cytoscape-loop.qmd) up to *bash split* chunk.
+:::
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/leaf/scripts")
+```
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+```{bash tf-activ}
+
+cd ../results/network/
+
+for i in {1..13}; do
+awk '
+    NR==FNR {           # Czytamy pierwszy plik (rel3-genes-tf_activ)
+        keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
+       next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
+    }
+    $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 2
+        print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
+    }
+' ../../../../input-data/go-uniprot/rel3-genes-tf_activ cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_rel3_tf-activ.txt;
+done
+
+## Remove files without data
+
+files=($(ls cluster_*_400_rel3_tf-activ.txt))
+
+for file in ${files[@]}; do
+# Przykład: liczymy linie w pliku data.txt
+linijek=$(wc -l < ${file})   # < – przekierowanie, dzięki czemu wc zwraca samą liczbę
+
+if (( linijek < 2 )); then
+rm ${file}
+fi
+done
+```
+
+```{bash photosyn}
+cd ../results/network/
+
+for i in {1..13}; do
+awk '
+    NR==FNR {           # Czytamy pierwszy plik (rel3-genes-photosyn)
+        keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
+       next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
+    }
+    $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 2
+        print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
+    }
+' ../../../../input-data/go-uniprot/rel3-genes-photosyn cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_rel3_photosyn.txt;
+done
+
+## Remove files without data
+
+files=($(ls cluster_*_400_rel3_photosyn.txt))
+
+for file in ${files[@]}; do
+# Przykład: liczymy linie w pliku data.txt
+linijek=$(wc -l < ${file})   # < – przekierowanie, dzięki czemu wc zwraca samą liczbę
+
+if (( linijek < 2 )); then
+rm ${file}
+fi
+done
+```
+
+```{bash rhythm}
+cd ../results/network/
+
+for i in {1..13}; do
+awk '
+    NR==FNR {           # Czytamy pierwszy plik (rel3-genes-rhythm)
+        keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
+       next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
+    }
+    $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 2
+        print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
+    }
+' ../../../../input-data/go-uniprot/rel3-genes-rhythm cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_rel3_rhythm.txt;
+done
+
+## Remove files without data
+
+files=($(ls cluster_*_400_rel3_rhythm.txt))
+
+for file in ${files[@]}; do
+# Przykład: liczymy linie w pliku data.txt
+linijek=$(wc -l < ${file})   # < – przekierowanie, dzięki czemu wc zwraca samą liczbę
+
+if (( linijek < 2 )); then
+rm ${file}
+fi
+done
+```
+
+## References
