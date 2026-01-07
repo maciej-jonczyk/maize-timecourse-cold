@@ -128,4 +128,34 @@ fi
 done
 ```
 
+```{bash dev-rel}
+cd ../results/network/
+
+for i in {1..13}; do
+awk '
+    NR==FNR {           # Czytamy pierwszy plik (rel3-genes-dev)
+        keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
+       next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
+    }
+    $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 2
+        print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
+    }
+' ../../../../input-data/go-uniprot/rel3-genes-dev cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_rel3_dev.txt;
+done
+
+## Remove files without data
+
+files=($(ls cluster_*_400_rel3_dev.txt))
+
+for file in ${files[@]}; do
+# Przykład: liczymy linie w pliku data.txt
+linijek=$(wc -l < ${file})   # < – przekierowanie, dzięki czemu wc zwraca samą liczbę
+
+if (( linijek < 2 )); then
+rm ${file}
+fi
+done
+```
+
 ## References

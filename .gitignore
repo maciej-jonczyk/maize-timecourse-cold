@@ -15,6 +15,7 @@ input-data/**
 
 # 4. Teraz od‑ignoruj (uwzględnij) pliki .qmd w tych podkatalogach
 !/input-data/*/*.qmd
+!/input-data/*/*.sh
 **/rdata-saved/
 **/results/
 **/plot*

@@ -1,0 +1,47 @@
+---
+title: "Check many-to-many relations in example ensembl-KEGG mapping from goseq manual"
+format: html
+date: "2025-12-21"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  engine: python
+  echo: true
+---
+
+The aim of this code is to reproduce example from `goseq` manual to check if many-to-many relationships are retained for enrichment analysis. I plan to use NAM-KEGG mapping downloaded from UniProt.
+
+```{r packages}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("org.Hs.eg.db")
+```
+
+```{r}
+library(org.Hs.eg.db)
+
+# Get the mapping from ENSEMBL 2 Entrez
+en2eg <- as.list(org.Hs.egENSEMBL2EG)
+```
+
+```{r}
+# Get the mapping from Entrez 2 KEGG
+eg2kegg <- as.list(org.Hs.egPATH)
+```
+
+```{r}
+# Define a function which gets all unique KEGG IDs
+# associated with a set of Entrez IDs
+grepKEGG <- function(id, mapkeys) {
+unique(unlist(mapkeys[id], use.names = FALSE))
+}
+```
+
+```{r}
+# Apply this function to every entry in the mapping from
+# ENSEMBL 2 Entrez to combine the two maps
+kegg <- lapply(en2eg, grepKEGG, eg2kegg)
+head(kegg)
+```
+
+Resulting list has many-tom-many mapping and it is used for `goseq` analysis *as is*.

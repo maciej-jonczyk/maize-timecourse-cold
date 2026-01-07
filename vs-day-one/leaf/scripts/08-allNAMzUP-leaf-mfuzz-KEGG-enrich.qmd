@@ -1,0 +1,291 @@
+---
+title: "KEGG pathway enrichment analysis for expression changes in leaf in cold - ALL significant genes"
+format: html
+date: "2026-01-07"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+## Rationale
+This script uses NAM-KEGG annotation prepared in `[01-ensembl2KEGG.qmd](../../../input-data/kegg-up/01-ensembl2KEGG.qmd)`.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup}
+#| include: false
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/leaf/scripts")
+```
+
+```{r}
+#| eval: false
+#| output: false
+#setwd("/media/mj/ANTIX-LIVE/project1-stat/scripts")
+# Clean working directory
+rm(list=ls())
+```
+
+## Files for analysis
+
+Computation of median transcript length
+
+```{r median length}
+#| message: false
+
+df <- read.table("../../../input-data/go-uniprot/tran2gene2length", header = FALSE, col.names = c("ID", "Value"))
+
+library(dplyr)
+
+medians <- df |>
+  group_by(ID) |>
+    summarise(med = round(median(Value)))
+
+# create list of genes and list of lengths
+assayed.genes <- medians[[1]]
+
+length.vec <- setNames(medians[[2]], medians[[1]])
+length.vec <- setNames(as.integer(length.vec), names(length.vec))
+
+# read GO categories
+
+expr.paths=read.table("../../../input-data/kegg-up/leaf_path.pop", header = FALSE, stringsAsFactors = FALSE)
+
+# clean up
+rm(df, medians)
+
+```
+
+Files for analysis - whole transcriptome
+| object | description |
+| --- | --- |
+| `assayed.genes` | all known maize genes (from `gff`) |
+| `length.vec` | median length of each gene in `assayed.genes` |
+| `expr.paths` | KEGG pathways for expressed genes | made in `../../../input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd` and `../../../input-data/go-uniprot/00-test-filter.qmd` file |
+
+:::{.callout-note}
+These files are valid for a given genome annotation (genes in `gff` file), GO annotation version and Experiment.
+:::
+
+
+### Preparing files
+
+```{r expressed}
+# selection of expressed genes from each of three above objects is needed
+
+library(DESeq2)
+
+## load filtered object (after minimal counts filter and DESeq function)
+load("../rdata-saved/dds.f.RDa")
+
+## extract gene names, it will be used instead of assayed.genes
+expressed.genes <- sort(rownames(dds.f))
+
+## select respective values from length.vec
+expr.length.vec <- length.vec[names(length.vec) %in% expressed.genes]
+
+# to avoid mistakes - remove objects for whole transcriptome
+rm(assayed.genes, length.vec)
+```
+
+Load the data from the mfuzz analysis for given number of clusters and fuzziness (computed in [07-leaf-only-mfuzzALLsig.qmd](07-leaf-only-mfuzzALLsig.qmd))
+
+```{r load data}
+#| message: false
+
+# Change file appropriately
+load("../rdata-saved/mfuzz_c13_m1.35_leafALLsig.RDa")
+
+# genes_in_clusters object is needed (contain genes with mem >=0.7)
+```
+
+## Enrichment analysis
+
+Using `goseq` package [@youngGeneOntologyAnalysis2010]
+
+### Create a vector of significant genes
+
+```{r create vector lapply}
+result.v <- lapply(genes_in_clusters, function(obj) as.integer(expressed.genes %in% obj))
+
+give_names <- function(x) {
+  names(x) <- expressed.genes
+  return(x)
+}
+
+result.v.named <- lapply(result.v, give_names)
+
+```
+
+### Fitting the Probability Weighting Function (PWF)
+
+```{r pwf lapply}
+#| echo: false
+#| message: false
+library(goseq)
+# create vectors
+
+result.pwf <- lapply(result.v.named, function(obj) nullp(obj, bias.data=expr.length.vec, plot.fit=FALSE))
+
+```
+
+```{r plots lapply}
+#| warning: false
+lapply(result.pwf, function(obj) plotPWF(obj, main="PWF"))
+```
+
+### Test
+
+```{r goseq lapply}
+#| message: false
+#| output: false
+
+# list of names
+# goseq
+
+## result tables
+result.goseq <- lapply(result.pwf, function(obj) goseq(obj, gene2cat=expr.paths, method="Wallenius", use_genes_without_cat=FALSE))
+
+## Adjust p-values with BH method, list of vectors with significant GOs
+result.bh <- lapply(result.goseq, function(obj) obj$category[p.adjust(obj$over_represented_pvalue, method="BH")<.05])
+
+```
+
+The aim of the following code is to retrieve significant GOs along with numerical data used for test.
+This data is planned for use in an article like in @sobkowiakMolecular2016
+
+## Data extraction
+
+The `result.goseq` list contain numDEInCat (*Study Term*) and numInCat (*Pop Term*).
+We need to add *Study Total* and *Pop Total*.
+
+## Total number of genes with GO annotation (*Pop Total*)
+
+This number is retrieved from `expr.paths` object
+
+```{r Pop Total}
+
+length(unique(expr.paths$V1))
+
+# 3509
+
+```
+
+## Determining *Study Total*
+
+Total number of genes with GO annotation in a given cluster (after filtering for membership >= 0.7).
+
+### Processing all files in loop
+
+```{r Study Total lapply}
+
+# wektor dopuszczonych genów
+annotated_genes <- unique(expr.paths$V1)
+
+# nowa lista – zachowujemy tylko te geny, które są w annotated_genes
+genes_in_clusters_KEGG <- lapply(genes_in_clusters, function(vec) vec[ vec %in% annotated_genes ])
+
+result.sumgo <- lapply(genes_in_clusters_KEGG, length)
+
+# 1. Remove original GO-columns (they are added by goseq and are not complete) and add info extracted from go.obo used in all analyses.
+
+col_to_remove <- c("under_represented_pvalue", "term", "ontology")
+
+# usuń te kolumny ze wszystkich elementów listy result.goseq
+result.goseq2 <- lapply(result.goseq, function(df) {
+  # znajdź nazwy, które istnieją zarówno w df, jak i w col_to_remove
+  cols_to_delete <- intersect(col_to_remove, names(df))
+  
+  # jeśli są takie kolumny, usuń je
+  df[cols_to_delete] <- NULL   # alternatywnie: df[, cols_present] <- NULL
+  
+  df   # zwróć zmodyfikowaną ramkę danych
+})
+
+## Read GO-name-namespace file
+
+go_terms_names <- read.table("../../../input-data/kegg-up/kegg_pathway_names.tsv", header = TRUE, stringsAsFactors = FALSE, sep = '\t', quote = "")
+colnames(go_terms_names) <- c("category", "name")
+
+## Add GO names and namespace to each data frame in padj005
+library(dplyr)
+
+result.goseq25 <- lapply(result.goseq2, function(df) {
+left_join(
+  df,
+  go_terms_names,
+  by = "category",
+  copy = FALSE
+)
+}
+)
+
+# 2. Add column from list result.sumgo to each df in result.goseq25
+
+# ---- Add vector as new column ------------
+# use Map – function gets two arguments
+add_constant_column <- function(df, val, col_name = "StudyTotal") {
+  # repeat value so length = number of rows
+  df[[col_name]] <- rep(val, nrow(df))
+  df
+}
+
+result.goseq3 <- Map(add_constant_column, result.goseq25, result.sumgo,
+                     MoreArgs = list(col_name = "StudyTotal"))
+
+# 3. Add Pop Total
+
+poptotal = length(unique(expr.paths$V1))
+col_name = "PopTotal"
+
+result.goseq4 <- lapply(result.goseq3, function(df) {
+  df[[col_name]] <- rep(poptotal, nrow(df))  # duplicate to match number of rows
+  df                                            # return modified df
+})
+
+# 4. Adjust p-value
+
+add_BH_adj <- function(df) {
+  df$p_adj_BH <- p.adjust(df$over_represented_pvalue, method = "BH")
+  df
+}
+
+result.goseq_adj <- lapply(result.goseq4, add_BH_adj)
+
+## Check - only categories with p < 0.05
+padj005 <- lapply(result.goseq_adj, function(df) subset(df, p_adj_BH < 0.05))
+
+
+# remove empty elements of list (not having significant GOs)
+result_filt <- Filter(function(x) {
+  # retain elements with at least 1 row
+  inherits(x, "data.frame") && nrow(x) > 0
+}, padj005)
+
+## Rearrange columns
+
+result_clean <- lapply(result_filt, function(df) {
+  df[, c("category", "name",
+         "numDEInCat", "numInCat", "StudyTotal",
+          "PopTotal",
+         "over_represented_pvalue", "p_adj_BH")]
+})
+
+```
+
+```{r save}
+leaf_kegg_summary <- do.call(rbind, lapply(names(result_clean), function(n) {
+  df <- result_clean[[n]]
+  df$cluster <- sub("Klaster ", "", n)  # Wyodrębnij numer
+  return(df)
+}))
+
+write.table(leaf_kegg_summary, file="../results/kegg/leafALLsig_kegg_enrich_summary.txt", sep="\t", row.names=FALSE, col.names=TRUE, quote=FALSE)
+```
+
+## References

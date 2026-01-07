@@ -1,0 +1,169 @@
+---
+title: "Translate NAM IDs to KEGG pathawy IDs"
+format: html
+date: "2025-12-25"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  engine: python
+  echo: true
+---
+
+## Rationale
+
+The aim of this code is to translate UniProt IDs to KEGG pathway IDs.
+The procedure is done for:
+1. All UPs matching NAMs (from *UPs_NAMs_all_dat* file). This approach matches this described in `goseq` manual.
+2. Selected *best* UPs for each NAM. Restricts analysis to annotations for chosen UPs.
+
+## All UPs matching NAMs
+
+### Get KEGG IDs
+
+```{bash up-nam}
+# Get all UP-NAM pairs
+grep -w EnsemblGenome ../go-uniprot/source-files/UPs_NAMs_all_dat | cut -f1 -d $'\t' | sort -u > UP-all-with-NAM
+```
+
+```{bash get-kegg-ids}
+# KEGG mapping file from UniProt were downloaded at 26-12-2025
+# Extract all KEGG IDs for KEGG pathway IDs retrieval
+zcat uniprotkb_organism_id_4577_AND_database_2025_12_26.tsv.gz | cut -f5,6 -d $'\t' | sed -E 's/;\t/\t/;s/;$//' > NAM_KEGG_multientry
+```
+
+Transfrom file to two-column form: KEGG ID, NAM ID
+```{bash two-column}
+awk -F'\t' -v OFS='\t' '{
+    split($1, zma_ids, ";")
+    split($2, zm_ids, ";")
+    
+    for (i in zma_ids) {
+        for (j in zm_ids) {
+            if (zma_ids[i] != "" && zm_ids[j] != "") {
+                print zma_ids[i], zm_ids[j]
+            }
+        }
+    }
+}' NAM_KEGG_multientry > NAM_KEGG
+
+cut -f1 -d'_' NAM_KEGG | sort -u > x
+mv x NAM_KEGG
+
+# get only KEGG IDs
+cut -f1 -d $'\t' NAM_KEGG | sort -u | tail -n +2 > KEGG
+```
+
+Retrieve KEGG pathway IDs
+```{python KEGG ID2}
+import requests
+import time
+import pandas as pd
+
+# Funkcja do pobierania wszystkich ścieżek dla identyfikatora KEGG
+def get_kegg_pathways(kegg_id):
+    url = f"https://rest.kegg.jp/link/pathway/{kegg_id}"
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        return response.text
+    else:
+        print(f"Błąd w zapytaniu dla {kegg_id}: {response.status_code}")
+        return None
+
+# Wczytaj identyfikatory KEGG z pliku
+with open('KEGG', 'r') as file:
+    kegg_ids = file.read().splitlines()
+
+# Lista do przechowywania wyników
+results = []
+
+# Zbieranie wyników dla każdego identyfikatora z odpowiednim opóźnieniem
+for i, kegg_id in enumerate(kegg_ids):
+    data = get_kegg_pathways(kegg_id)
+    
+    if data:
+        pathways = data.splitlines()
+        for pathway in pathways:
+            columns = pathway.split("\t")
+            # Upewnij się, że są co najmniej dwie kolumny
+            if len(columns) > 1:
+                pathway_id = columns[1]  # ID ścieżki jest w drugiej kolumnie
+                results.append((kegg_id, pathway_id))
+            else:
+                print(f"Błąd: Nieprawidłowa odpowiedź dla {kegg_id}: {pathway}")
+        
+    # Ograniczenie wywołań: 3 na sekundę
+    if (i + 1) % 3 == 0:
+        time.sleep(1)
+
+# Zapisz wyniki do pliku CSV
+df = pd.DataFrame(results, columns=["KEGG_ID", "ID_ścieżek"])
+df.to_csv("kegg_results.csv", index=False)
+
+print("Wyniki zapisane do pliku kegg_results.csv")
+
+```
+
+Join NAM IDs and KEGG pathway IDs
+
+```{bash NAM2path}
+# change separator
+tr ',' '\t' < kegg_results.csv > xkrt
+# join
+join -j1 -t $'\t' -o1.2,2.2 NAM_KEGG xkrt | sort -u > NAM_path
+
+# save only KEGG IDs
+cut -f2 -d $'\t' NAM_path | sort -u > paths_z_NAM
+```
+
+Make population files for SAM and leaf
+
+```{bash make pop}
+# for SAM
+grep -Fwf ../../vs-day-one/sam/results/go/expressed_genes_samALLsig.txt NAM_path > SAM_path.pop
+# for leaf
+grep -Fwf ../../vs-day-one/leaf/results/go/expressed_genes_leafALLsig.txt NAM_path > leaf_path.pop
+```
+
+```{python path name}
+import requests
+import pandas as pd
+import time
+
+# Funkcja do pobierania nazwy ścieżki KEGG na podstawie pathway_id
+def get_pathway_name(pathway_id):
+    url = f"https://rest.kegg.jp/get/{pathway_id}"
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        lines = response.text.splitlines()
+        for line in lines:
+            if line.startswith("NAME"):
+                return line.split("NAME")[1].strip()
+    else:
+        print(f"Błąd w zapytaniu dla {pathway_id}: {response.status_code}")
+    return None
+
+# Wczytaj identyfikatory ścieżek z pliku
+with open('paths_z_NAM', 'r') as file:
+    pathway_ids = file.read().splitlines()
+
+# Lista do przechowywania wyników
+results = []
+
+# Zbieranie nazw dla każdego pathway_id z odpowiednim opóźnieniem
+for i, pathway_id in enumerate(pathway_ids):
+    pathway_name = get_pathway_name(pathway_id)
+    results.append((pathway_id, pathway_name))
+
+    # Ograniczenie wywołań: 3 na sekundę
+    if (i + 1) % 3 == 0:
+        time.sleep(1)
+
+# Zapisz wyniki do pliku CSV
+df = pd.DataFrame(results, columns=["Pathway_ID", "Nazwa_ścieżki"])
+df.to_csv("kegg_pathway_names.tsv", sep='\t', index=False)
+
+print("Wyniki zapisane do pliku kegg_pathway_names.tsv")
+
+```
+
