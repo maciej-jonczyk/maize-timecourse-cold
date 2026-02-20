@@ -1,0 +1,125 @@
+---
+title: "Select orthologues of arabidopsis clock genes in maize"
+format: html
+date: "2026-02-12"
+---
+
+1. *Arabidopsis thaliana* proteins with "rhythmic process" (GO:0048511) GO annotation were retrieved from UniProt Release 2026_01.
+
+```{bash gene-list}
+# extract arabidopsis UPs
+zcat uniprotkb_organism_id_3702_AND_go_00485_2026_02_13.tsv.gz | cut -f1 | tail -n +2 > at_UP
+
+# UPs and description
+zcat uniprotkb_organism_id_3702_AND_go_00485_2026_02_13.tsv.gz | cut -f1,6 -d $'\t' | tail -n +2 | sort -k1,1 -t $'\t' > at_UP_descr
+
+# extract arabidopsis ensembl gene ids
+zcat uniprotkb_organism_id_3702_AND_go_00485_2026_02_13.tsv.gz | cut -f2 -d $'\t' | tr ';' '\n' | cut -f1 -d"." | sort -u | cat -n | tail -n +2 | head -n -1 > at_gramene
+```
+
+2. Maize orthologues were retrieved with BioMart from gramene (Ensembl Plants Genes 62).
+  **Method 1**: retrieve using UPs and "UniProtKB Gene Name IDs", "UniProtKB/SwissProt" and "UniProtKB/TrEMBL"
+
+```{bash check m1}
+# count unique rows
+awk -F'\t' '$2!=""' mart-up-genename | sort -u | wc -l
+# 217
+awk -F'\t' '$2!=""' mart-up-swiss | sort -u | wc -l
+# 215
+awk -F'\t' '$2!=""' mart-up-trembl | sort -u | wc -l
+# 28
+
+# concatenate and clean
+# total number of orthologues
+cat mart-up* | awk -F'\t' '$2!=""' | sort -u | wc -l
+# 220
+cat mart-up* | awk -F'\t' '$2!=""' | sort -u > mart-all-up
+
+# unique At UPs
+sort -k1,1 -t $'\t' -u mart-all-up | wc -l
+# 86
+# unique NAMs (maize genes)
+sort -k2,2 -t $'\t' -u mart-all-up | wc -l
+# 193
+# extensive duplication
+# Conclusion - filtering is needed
+```
+
+  **Method 2**: retrieve using gramene IDs
+```{bash check m2}
+# count unique rows
+awk -F'\t' '$2!=""' mart-gramene | sort -u | wc -l
+# 215
+awk -F'\t' '$2!=""' mart-gramene | sort -u > mart-all-gramene
+```
+
+```{bash compare}
+# compare
+diff mart-all-gramene mart-all-up
+# 41a42
+# > AT2G21070     Zm00001eb208320 0       56.4103 51.462
+# 56a58
+# > AT3G01060     Zm00001eb292620 0       76.082  73.4066
+# 87a90,91
+# > AT3G55960     Zm00001eb148930 1       46.978  56.0656
+# > AT3G55960     Zm00001eb368330 1       54.3408 55.4098
+# 115a120
+# > AT4G02630     Zm00001eb348580 1       57.9158 58.7398
+
+# so using UP IDs gives 5 more orthologues
+```
+
+3. Add protein names
+
+Also add zea UPs using file [00-at-ortho.qmd](../../../input-data/at-ortho_rhythmic-process/00-at-ortho.qmd)
+```{bash add names}
+# Split 2nd field by ; to have one gramene ID per line
+
+awk -F'\t' -v OFS='\t' '
+{
+    n = split($2, arr, /;/)   # podziel $2 po ";", wynik w tablicy arr[1..n]
+
+    # Dla każdego elementu wypisz cały wiersz, ale z jedną wartością w kolumnie 2
+    for (i = 1; i <= n; i++) {
+        $2 = arr[i];
+        print
+    }
+}
+' < x > x2
+
+# remove lines without ID in 2nd field, remove version number and select unique rows
+awk -F'\t' -v OFS='\t' '$2!=""' x2 | sed 's/\./\t/' | cut -f3 -d $'\t' --complement | sort -u | sort -k2,2 -t $'\t' > UP_gramene_names
+
+# add names to orthologue list
+join -1 1 -2 2 -t $'\t' mart-all-gramene UP_gramene_names  > x
+mv x mart-all-gramene
+
+join -1 1 -2 2 -t $'\t' mart-all-up UP_gramene_names  > x
+wc -l x
+# 214 x
+
+# so not all IDs have names, why?
+join -1 1 -2 2 -t $'\t' -a1 -o auto mart-all-up UP_gramene_names  > x
+awk -F'\t' '$7==""' x
+# AT2G21070       Zm00001eb208320 0       56.4103 51.462
+# AT3G01060       Zm00001eb292620 0       76.082  73.4066
+# AT3G55960       Zm00001eb148930 1       46.978  56.0656
+# AT3G55960       Zm00001eb368330 1       54.3408 55.4098
+# AT4G02630       Zm00001eb348580 1       57.9158 58.7398
+
+# manual check in UniProt and gramene showed that these 4 At genes are not port of central clock so can be ignored
+
+# Conclusion - orthologue mapping with gramene IDs will be used further
+
+# Differentially expressed genes in each project and tissue can be selected from mart-all-gramene file.
+
+# Add maize UPs to mart-all-gramene
+
+sort -k2,2 -t $'\t' mart-all-gramene > x
+mv x mart-all-gramene
+
+join -1 1 -2 2 -t $'\t' ../go-uniprot/NAM2UP_all_forGOextraction mart-all-gramene > mart-all-gramene_up-zea
+```
+
+
+

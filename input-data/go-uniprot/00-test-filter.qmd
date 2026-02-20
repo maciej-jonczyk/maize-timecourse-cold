@@ -5,7 +5,7 @@ date: "2025-12-05"
 ---
 
 :::{.callout-caution}
-This code continues `00-GO-and-mapping-UniProt.qmd`. And *must* be executed if best NAM-UP pairs are not selected already.
+This code continues [00-GO-and-mapping-UniProt.qmd](00-GO-and-mapping-UniProt.qmd). And *must* be executed if best NAM-UP pairs are not selected already.
 :::
 
 ```{bash}
@@ -164,5 +164,5 @@ diff xbest_basic xbest_string_goa_rev_noscore | wc -l
 ```
 
 :::{.callout-caution}
-Return to `00-GO-and-mapping-UniProt.qmd` for preparation of files for each analysed dataset (SAM, leaf, ...)
+Return to [00-GO-and-mapping-UniProt.qmd](00-GO-and-mapping-UniProt.qmd) for preparation of files for each analysed dataset (SAM, leaf, ...)
 :::

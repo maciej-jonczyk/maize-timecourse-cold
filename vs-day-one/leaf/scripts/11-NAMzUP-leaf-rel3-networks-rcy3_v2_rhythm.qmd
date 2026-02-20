@@ -18,11 +18,6 @@ Built with R version `r getRversion()`
 
 Environment cleaning and set-up
 
-```{r setup}
-#| include: false
-knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(root.dir = "/home/mj/project1-stat/vs-day-one/leaf/scripts")
-```
 
 ```{r packages}
 #| eval: false
@@ -54,7 +49,7 @@ for (i in c(4, 6)) {
   
   cl = read.table(input_file, header=TRUE, stringsAsFactors = FALSE, sep='\t', quote = "")
   
-  # NODE info, rbind columns from source node and target node
+# NODE info, rbind columns from source node and target node
 src=unique(cl[c('uniprot1', 'ensembl1', 'desc1', 'cluster1', 'member1')])
 trg=unique(cl[c('uniprot2', 'ensembl2', 'desc2', 'cluster2', 'member2')])
 # names must be the same

@@ -18,8 +18,8 @@ Code from this file is run in `go-uniprot` directory.
 :::
 
 :::{.callout-note}
-There are also annotation from NCBI but it uses geneindex IDs which are unconvenient and their file has less annotations.
-Some comparisons of MaizeGAMER (used previously) UniProt and NCBI contents are in `10-SAM-networks-cytoscape.qmd` file.
+There are also annotation from NCBI but it uses geneindex IDs which are inconvenient and their file has less annotations.
+Some comparisons of MaizeGAMER (used previously) UniProt and NCBI contents are in [10-SAM-networks-cytoscape.qmd](../../vs-day-one/sam/scripts/10-SAM-networks-cytoscape.qmd) file.
 :::
 
 Consequently all annotation components will be congruent.
@@ -318,7 +318,7 @@ tr -d '#' < GO_terms_names.txt > x && mv x GO_terms_names.txt
 ```
 
 :::{.callout-caution}
-Move to `OO-test-filter.qmd` file for extracting best UP fo each NAM.
+Move to [OO-test-filter.qmd](OO-test-filter.qmd) file for extracting best UP fo each NAM.
 :::
 
 ## Prepare gene descriptions
