@@ -1,3 +1,5 @@
+# This file uses big files stored on external disk
+
 # podbaza "gene_xrefs" dla arabidopsis, żeby szybciej wydobywać ortologi
 zgrep -E '^3702_' odb12v2_gene_xrefs.tab.gz > 3702_odb12v2_gene_xrefs.tab
 

@@ -1,0 +1,122 @@
+---
+title: "Automatic import files to Cytoscape and color network, cold, leaf, pairwise"
+format: html
+date: "2026-03-22"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+*developmental process* GO category and descendants (childs) including *part_of* and *regulates* in addition to standard *is_a*.
+The aim of the script is to reproduce manual import of files and coloring of network in Cytoscape using RCy3 package.
+Automatic generation of networks for all clusters.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+library(RCy3)
+library(paletteer)
+```
+
+```{r packages}
+#| eval: false
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("RCy3")
+```
+
+```{r}
+#| output: false
+
+# load package
+library(RCy3)
+
+# check connection to Cytoscape
+cytoscapePing()
+
+# Clean working directory
+rm(list=ls())
+```
+
+```{r format all}
+# container for results, length = number of clusters with results for this category
+clusters <- vector("list", length = 15)
+
+# below, list exact numbers of clusters for this category
+# watch out for proper category suffix
+for (i in 1:15) {
+  input_file=paste0("../results/network/cluster_", i, "_400_rel3_dev.txt")
+  
+  cl = read.table(input_file, header=TRUE, stringsAsFactors = FALSE, sep='\t', quote = "")
+  
+  # NODE info, rbind columns from source node and target node
+src=unique(cl[c('uniprot1', 'ensembl1', 'desc1', 'cluster1', 'member1')])
+trg=unique(cl[c('uniprot2', 'ensembl2', 'desc2', 'cluster2', 'member2')])
+# names must be the same
+names(src) <- c('id', 'ensembl', 'desc', 'cluster', 'member')
+names(trg) <- c('id', 'ensembl', 'desc', 'cluster', 'member')
+# rbind
+node.info <- unique(rbind(src, trg))
+
+# sort node info table - in case of UPs multimapping to NAMs select NAM with cluster (sorts numerically, NAs are before numbers. During network generation the last row for each id is selected)
+## POTENTIAL PROBLEM, if UP have NAMs from >1 cluster it selects the one with the highest cluster number!!!
+## REQUIRE MANUAL CHECKING
+ord <- order(node.info[[1]],                 # kolumna 1 – sortowanie leksykograficzne
+             as.numeric(node.info[[4]]),    # kolumna 4 – sortowanie numeryczne
+             na.last = FALSE)
+
+node.info_srt <- node.info[ord, ]
+
+# EDGE table
+edge.info=unique(cl[,!names(cl) %in% c('ensembl1', 'desc1', 'cluster1', 'member1', 'ensembl2', 'desc2', 'cluster2', 'member2')])
+
+# change collection name appropriately
+createNetworkFromDataFrames(
+  title=gsub("../results/network/", "", input_file),
+  collection="leaf, cold-pairiwse, developmental",
+  nodes=node.info_srt,
+  source.id.list="uniprot1",
+  target.id.list="uniprot2",
+  edges=edge.info
+)
+
+library(paletteer)
+# Użycie palety kolorów
+colors <- paletteer_dynamic("cartography::orange.pal", 15)
+
+# Usunięcie ostatnich dwóch znaków - inaczej jest za dużo i kody są niepoprawne (przynajmniej dla tej funkcji)
+colors <- substr(colors, 1, 7)
+
+# Ustawienie mapowania kolorów
+setNodeColorMapping(
+  "cluster",
+  as.character(1:15),
+  colors,
+  mapping.type = "c"
+)
+
+setNodeColorBypass(
+  t(subset(node.info_srt, cluster == i, select=c("id"))),
+  "#78c679"
+)
+
+# run "Analyze network" to get degree values
+analyzeNetwork()
+
+setNodeSizeMapping(
+  "Degree",
+  c(1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100),
+  c(20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70),
+  mapping.type="c"
+)
+}
+```
+
+
+## References

@@ -1,0 +1,84 @@
+---
+title: "Join tables summarising significant genes in clusters, plus annotation"
+format: html
+date: "2026-03-13"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+This code used files made in:
+- [13-SAM-genes-cluster-table.qmd](13-SAM-genes-cluster-table.qmd) - results for SAM in cold
+- [13-leaf-genes-cluster-table.qmd](../../leaf/scripts/13-leaf-genes-cluster-table.qmd) - results for leaf in cold
+- [13-SAM-ctrl-genes-cluster-table.qmd](../../../../project1-ctrl-stat/vs-day-one/sam/scripts/13-SAM-ctrl-genes-cluster-table.qmd) - results for SAM in control
+- [13-leaf-ctrl-genes-cluster-table.qmd](../../../../project1-ctrl-stat/vs-day-one/leaf/scripts/13-leaf-ctrl-genes-cluster-table.qmd) - results for leaf in control
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+Load `DESeq2` results - tables for contrasts, saved in [02-SAM-only-loop-regr-cold.qmd](02-SAM-only-loop-regr-cold.qmd)
+
+```{r load}
+library(DESeq2)
+
+load("../rdata-saved/sam_cold.DE_cluster_table.RDa")
+load("../../leaf/rdata-saved/leaf_cold.DE_cluster_table.RDa")
+load("../../../../project1-ctrl-stat/vs-day-one/sam/rdata-saved/sam_ctrl.DE_cluster_table.RDa")
+load("../../../../project1-ctrl-stat/vs-day-one/leaf/rdata-saved/leaf_ctrl.DE_cluster_table.RDa")
+```
+
+Join together log2FC values for significant genes in each comparison.
+
+```{r join}
+# !! "unquoting" operator enforces immediate evaluation of the left-side variable inside the function.
+# := "glue" operator (frequently used instead of = in rename), allows dynamical mapping of columns' names.
+
+library(dplyr)
+library(tibble)
+in_names <- c("leaf_cold", "leaf_ctrl", "sam_cold", "sam_ctrl")
+
+fc_decl <- data.frame(Name = character())
+
+for (name in in_names) {
+  in_obj=as.data.frame(get(name))
+
+  fc_decl = full_join(fc_decl, in_obj, by = "Name")
+}
+
+#rm(list = in_names)
+```
+
+Add annotation.
+
+```{r anno}
+# load annotation
+anno = read.table("../../../input-data/go-uniprot/NAM_descr_best", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+colnames(anno) <- c("Name", "description")
+
+# join with DE-data
+fc_decl_anno <- left_join(fc_decl, anno, by = "Name")
+
+# join with UPs
+ups = read.table("../../../input-data/go-uniprot/NAM2UP_all_forGOextraction", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+colnames(ups) <- c("Name", "UniProt")
+
+fc_decl_anno_up <- left_join(fc_decl_anno, ups, by = "Name") |>
+  relocate(UniProt, .after = Name)
+```
+
+Save to file
+
+```{r save}
+write.table(fc_decl_anno_up, file = "../../genes_cluster_table_coldctrl.csv", quote = FALSE, sep = "\t", row.names = FALSE)
+```

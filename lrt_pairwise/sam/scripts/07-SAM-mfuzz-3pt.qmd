@@ -1,7 +1,7 @@
 ---
-title: "Mfuzz clustering of SAM data, ALL significant genes"
+title: "Mfuzz clustering of SAM data, minimum 3 significant genes from point by point comparisons."
 format: html
-date: "2025-09-22"
+date: "2026-03-22"
 bibliography: ../../../refs-stat-anal.bib
 execute:
   fig-format: png
@@ -10,24 +10,28 @@ execute:
 
 The aim of this code is to fuzzy-cluster genes using Mfuzz package [@futschikNoiserobustSoftClustering2005; @kumarMfuzzSoftwarePackage2007]
 
-Comparisons to day one (penultimate day of cold)
-
-
-/media/mj/ANTIX-LIVE/2024_04_01.counts.PS
-/media/mj/ANTIX-LIVE/expr-anal2powt
+The DE-analysis compares each time point for each pair of maize lines.
 
 http://mfuzz.sysbiolab.eu/
 https://support.bioconductor.org/p/9156659/ # uśrednianie reps i użycie vst
 https://support.bioconductor.org/p/111294/ # info o cpm od developerów
 https://support.bioconductor.org/p/9156710/ # garść info od Love
 
-
-
 Built with R version `r getRversion()`
 
 ## R Preliminaries
 
 Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+library(DESeq2)
+library(GenomicRanges)
+library(limma)
+library(Mfuzz)
+library(dplyr)
+library(parallel)
+```
 
 ```{r packages}
 #| eval: false
@@ -57,14 +61,14 @@ Loading object (created in `cleanup2`) in `check real` chunk is sufficient
 ### Load ALL significant genes
 
 ```{r load}
-load("../rdata-saved/sigs_all_SAM1.RDa")
+load("../rdata-saved/contr_pair_sam_sig005.RDa")
 ```
 
 ### Extract significant genes' IDs
 
 ```{r sigs}
 
-original_names <- grep("^[sa]", ls(), value = TRUE)
+original_names = ls(pattern = "sam_sig$")
 
 invisible(
   lapply(original_names, function(name) {
@@ -78,21 +82,39 @@ invisible(
   )
 )
 
-rm(list=ls(pattern = "^[sa]")) # remove original objects
-rm(original_names)
+# remove original objects
+rm(list = original_names)
 ```
 
-### Join vectors and remove duplicates
+### Join vectors, filter-out significant in less than 3 points
 
 ```{r join}
-
 vectors <- mget(ls(pattern = "^ids.*"))
 
-# concatenate and remove duplicates
-joined_ids <- unique(unlist(vectors))
+# concatenate
+joined_ids <- unlist(vectors)
 
-rm(list=ls(pattern = "^ids.*")) # remove intermediate objects
+# how many times gene changes
+licznik = table(joined_ids)
 
+#hist(licznik, breaks = c(1 : 72))
+
+# filter-out genes significant < 3 times
+licznik_min3 <- licznik[licznik > 2]
+
+#hist(licznik_min3, breaks = c(1 : 72))
+
+# compare gene count
+length(licznik)
+length(licznik_min3)
+
+# keep gene names
+ids_min3 = names(licznik_min3)
+
+# remove intermediate objects
+keep = c("ids_min3")
+
+rm(list = setdiff(ls(), keep))
 ```
 
 ### Load counts and normalize them using VST
@@ -101,7 +123,7 @@ rm(list=ls(pattern = "^ids.*")) # remove intermediate objects
 load("../../../input-data/rdata/counts_and_metadata.RDa")
 
 # previously prepared range data
-library("GenomicRanges")
+
 load("../../../input-data/rdata/ranges.RDa")
 
 # make variable for averaging
@@ -126,18 +148,26 @@ all(rownames(coldata.srt) %in% colnames(cts.srt))
 all(rownames(coldata.srt) == colnames(cts.srt))
 
 # remove original objects
-rm(list=c("cts", "coldata"))
+rm(list=c("cts", "coldata", "multiplot"))
 ```
 
-### Subset SAM data
+### Subset sam data
 
 Subsetting is done at the level of raw data (counts and coldata).
-```{r subset SAM data}
+```{r subset sam data}
 # subset coldata to contain only sam data
 coldata.sam=subset(coldata.srt, tissue=="sam")
 
 # check
 dim(coldata.sam)
+
+# add variable describing chronology of samples
+coldata.sam$timepoint = as.integer(as.numeric(coldata.sam$time)) + ( as.integer(as.numeric(coldata.sam$day)) - 1 ) * 3
+# make 'timepoint' a factor
+coldata.sam$timepoint = as.factor(coldata.sam$timepoint)
+
+# Adding grouping variable to easily analyse all comparisons needed
+coldata.sam$group <- factor(paste0(coldata.sam$line, "_", coldata.sam$timepoint))
 
 # vector of sample names to keep - needed to select columns from count file
 keep.sam=rownames(coldata.sam)
@@ -156,6 +186,8 @@ colnames(cts.sam)
 # Check if counts and coldata are in concert
 all(rownames(coldata.sam) %in% colnames(cts.sam))
 all(rownames(coldata.sam) == colnames(cts.sam))
+
+rm(coldata.srt, cts.srt)
 ```
 
 ### Create DESeq2 object
@@ -163,9 +195,9 @@ all(rownames(coldata.sam) == colnames(cts.sam))
 ```{r dds, cache=TRUE}
 #| output: false
 #| message: false
-library("DESeq2")
+
 # create dataset, design included only for command completeness
-dds = DESeqDataSetFromMatrix(countData=cts.sam, colData=coldata.sam, rowRanges=gzakresy, design= ~ line+time)
+dds = DESeqDataSetFromMatrix(countData=cts.sam, colData=coldata.sam, rowRanges=gzakresy, design= ~ 0 + group)
 
 # check for missing values
 any(is.na(counts(dds)))
@@ -194,7 +226,7 @@ vsd = varianceStabilizingTransformation(dds.f, blind=TRUE)
 
 ```{r cleanup}
 # objects to keep
-keep <- c("vsd", "joined_ids")
+keep <- c("vsd", "ids_min3")
 
 # remove everything else
 rm(list = setdiff(ls(), keep))
@@ -204,10 +236,10 @@ rm(list = setdiff(ls(), keep))
 
 ```{r counts}
 # select sigs
-vsd.sigs = vsd[rownames(vsd) %in% joined_ids, ]
+vsd.sigs = vsd[rownames(vsd) %in% ids_min3, ]
 
 # varMetadata - description of variables
-metadata=data.frame(labelDescription=c("pooled sample", "letter", "tissue", "line", "hour of pooling", "sample number", "day", "replication", "condition", "id", "reads [million]", "batch [sequencing]", "million of reads binned", "grouping variable for averaging", "sizeFactor"), row.names=colnames(colData(vsd.sigs)))
+metadata=data.frame(labelDescription=c("pooled sample", "letter", "tissue", "line", "hour of pooling", "sample number", "day", "replication", "condition", "id", "reads [million]", "batch [sequencing]", "million of reads binned", "grouping variable for averaging", "chronological time point", "group", "sizeFactor"), row.names=colnames(colData(vsd.sigs)))
 
 # metadata
 phenoData=new("AnnotatedDataFrame", data=as.data.frame(colData(vsd.sigs)), varMetadata=metadata)
@@ -215,7 +247,6 @@ phenoData
 
 ## check
 # sampleNames(phenoData)
-# pData(phenoData)
 # varMetadata(phenoData)
 # head(pData(phenoData))
 
@@ -226,7 +257,6 @@ vsd.eset <- ExpressionSet(assayData=assay(vsd.sigs), phenoData=phenoData)
 ### Averaging and standardizing
 
 ```{r avg and std}
-library(limma)
 
 # average reps
 average = t(avereps(t(exprs(vsd.eset)), ID = vsd.eset$forAverage)) # output is a matrix
@@ -238,8 +268,6 @@ dim(vsd.eset)
 ## make new phenoData
 phenoDataAve = phenoData[!duplicated(vsd.eset$forAverage), ]
 rownames(phenoDataAve)= phenoDataAve$forAverage
-
-library(dplyr)
 
 pdata_sorted <- pData(phenoDataAve) |>
   arrange(line, day, time)
@@ -256,7 +284,7 @@ all(rownames(pData(phenoDataAve) ) == colnames(average.srt))
 vsd.eset.ave=ExpressionSet(assayData=average.srt, phenoData=phenoDataAve)
 
 # standardise
-library(Mfuzz)
+
 vsd.eset.ave.std=standardise(vsd.eset.ave)
 
 # check
@@ -264,86 +292,27 @@ head(exprs(vsd.eset.ave.std))
 
 ```
 
-### Standardising and averaging
-
-```{r std and ave}
-library(limma)
-
-# standardise
-library(Mfuzz)
-
-vsd.eset.std=standardise(vsd.eset)
-
-# average reps
-average.std = t(avereps(t(exprs(vsd.eset.std)), ID = vsd.eset.std$forAverage)) # output is a matrix
-
-# check
-dim(average.std)
-dim(vsd.eset.std)
-
-## make new phenoData
-phenoDataAve = phenoData[!duplicated(vsd.eset.std$forAverage), ]
-rownames(phenoDataAve)= phenoDataAve$forAverage
-
-library(dplyr)
-
-pdata_sorted <- pData(phenoDataAve) |>
-  arrange(line, day, time)
-
-# recreate AnnotatedDataFrame:
-pData(phenoDataAve) <- pdata_sorted
-
-# sort counts columns
-average.std.srt <- average.std[, rownames(pData(phenoDataAve))]
-
-all(rownames(pData(phenoDataAve) ) %in% colnames(average.std.srt))
-all(rownames(pData(phenoDataAve) ) == colnames(average.std.srt))
-
-vsd.eset.std.ave=ExpressionSet(assayData=average.std.srt, phenoData=phenoDataAve)
-```
-
 ### Saving and cleanup
 
-Correct order of operations (standardization, averaging) will be decided later
-
 ```{r cleanup2}
-# objects to keep
-keep <- c("vsd.eset.ave.std", "vsd.eset.std.ave")
-
-# remove everything else
-rm(list = setdiff(ls(), keep))
-
-save(vsd.eset.std.ave, file="../rdata-saved/vsd.eset.std.ave.samALLsig.RDa")
-save(vsd.eset.ave.std, file="../rdata-saved/vsd.eset.ave.std.samALLsig.RDa")
-```
-
-## Clustering, test for vsd.eset.ave.std
-
-### Estimate fuzzification parameters
-
-```{r estimate m}
 # objects to keep
 keep <- c("vsd.eset.ave.std")
 
 # remove everything else
 rm(list = setdiff(ls(), keep))
 
+save(vsd.eset.ave.std, file="../rdata-saved/vsd.eset.ave.std.sam_pair_min3pt.RDa")
+```
+
+## Clustering
+
+### Estimate fuzzification parameters
+
+```{r estimate m}
 # fuzzification parameter
 m1 <- mestimate(vsd.eset.ave.std)
 
 m1
-```
-
-```{r estimate c}
-# # using estimated m
-# 
-# cl1=mfuzz(vsd.eset.std, c=16, m=m1)
-# 
-# pdf("cl16_104R.pdf")
-# #mfuzz.plot2(vsd.eset.std, cl=cl1, x11 = FALSE, single = 1, time.labels = colnames(vsd.eset.std), cex.axis = 0.6, las = 2)
-# #mfuzz.plot2(vsd.eset.std, cl=cl1, x11 = FALSE, single = 1, time.labels = colnames(vsd.eset.std))
-# mfuzz.plot2(vsd.eset.std, cl=cl1, mfrow=c(4,4), x11 = FALSE)
-# dev.off()
 ```
 
 ### Estimate m using `partcoef`
@@ -354,14 +323,13 @@ m1
 ## TAKEN FROM partcoeff DESCRIPTION IN MANUAL
 vsd.random=randomise(vsd.eset.ave.std)
 
-tmpR=partcoef(vsd.random, crange=seq(7, 30, 1), mrange=seq(1.05, 1.45, 0.05))
+tmpR=partcoef(vsd.random, crange=seq(7, 20, 1), mrange=seq(1.05, 1.45, 0.05))
 
 F <- tmpR[[1]];F.n <- tmpR[[2]];F.min <- tmpR[[3]]
 F > 1.01 * F.min
 
 # it seems that value given by mestimate is too small, at least 1.1 must be used
 
-library(Mfuzz)
 # draw and save legend (uses modified function as this from package not work)
 source("../../../colorbar.R")
 pdf("colorbar.pdf", width=2, height=7)
@@ -370,13 +338,14 @@ dev.off()
 ```
 
 ```{r check random}
-# RANODM
+# RANDOM
+# For random data even m = 1.05 gives no clustering
 
 ##############################
 # Adjust parameters manually #
 ##############################
 
-# c_val <- 4 ; m_val <- 1.05 # uniform partitioning
+c_val <- 10 ; m_val <- 1.05 # uniform partitioning
 # c_val <- 8 ; m_val <- 1.05 # Non uniform partition (too low m value)
 # c_val <- 16 ; m_val <- 1.05 # Non uniform partition (too low m value) but empty cluster present
 # c_val <- 4 ; m_val <- 1.15 # produces uniform partitioning
@@ -398,8 +367,6 @@ dev.off()
 ### Automatic check for given combinations of c and m. Two methods.
 
 ```{r c auto}
-library(Mfuzz)
-library(parallel)
 
 # -------------------------------------------------
 # 1. Funkcja wykonująca pojedynczy krok
@@ -415,7 +382,7 @@ run_one_c <- function(m_val) {
   # Wywołanie Twojej funkcji cselection
   c_res <- cselection(vsd.eset.ave.std,
                        m      = m_val,
-                       crange = seq(15, 35, 1),
+                       crange = seq(8, 25, 1),
                        repeats = 10,
                        visu   = TRUE)
 
@@ -426,12 +393,12 @@ run_one_c <- function(m_val) {
 # -------------------------------------------------
 # 2. Przygotowanie wektora parametrów
 # -------------------------------------------------
-m_vals <- seq(1.25, 1.45, by = 0.05)
+m_vals <- seq(1.15, 1.45, by = 0.05)
 
 # -------------------------------------------------
-# 3. Liczba rdzeni (zostawiamy jeden wolny)
+# 3. Liczba rdzeni
 # -------------------------------------------------
-n_cores <- detectCores() - 1
+n_cores <- detectCores()
 
 # -------------------------------------------------
 # 4. Równoległe wywołanie
@@ -451,9 +418,6 @@ c_results <- setNames(
 
 
 ```{r dmin auto}
-library(Mfuzz)
-library(parallel)
-
 # Twoja funkcja – opakowujemy całą logikę w jedną funkcję
 run_one_m <- function(m_val) {
   # przygotuj nazwę pliku
@@ -466,7 +430,7 @@ run_one_m <- function(m_val) {
   # wywołanie Twojej funkcji Dmin (zakładam, że jest już załadowana)
   dmin_res <- Dmin(vsd.eset.ave.std,
                    m      = m_val,
-                   crange = seq(7, 40, 1),
+                   crange = seq(8, 25, 1),
                    repeats = 10,
                    visu   = TRUE)
 
@@ -480,7 +444,7 @@ m_vals <- seq(1.15, 1.45, by = 0.05)
 # m_vals <- 1.45
 
 # liczba rdzeni, które chcesz wykorzystać
-n_cores <- detectCores() - 1   # zostawiamy jeden wolny dla systemu
+n_cores <- detectCores()
 
 # uruchomienie równoległe
 out_list <- mclapply(m_vals, run_one_m, mc.cores = n_cores)
@@ -498,17 +462,15 @@ dmin_results <- setNames(
 ## Code for testing various values of c and m in one go ##
 # For this purpose uncomment plotting part
 
-library(Mfuzz)
-
 ## Parameters chosen by PI
 
-c_vals = 10 # Dmin
-m_vals = 1.25 # Dmin
+c_vals = 13
+m_vals = 1.25 #seq(1.15, 1.35, 0.05)
 
 
 ## Uncomment on new session
-# load("../rdata-saved/vsd.eset.ave.std.samALLsig.RDa")
-source("mfuzz.plot2_separate_lines.R") # modified plotting function, tailored to separate lines
+load("../rdata-saved/vsd.eset.ave.std.sam_pair_min3pt.RDa")
+source("../../../vs-day-one/sam/scripts/mfuzz.plot2_separate_lines.R") # modified plotting function, tailored to separate lines
 
 # lista wyników
 results <- list()
@@ -523,57 +485,59 @@ for (c_val in c_vals) {
     cl <- mfuzz(vsd.eset.ave.std, c = c_val, m = m_val)
 
     # save results to list
-    key <- paste0("c", c_val, "_m", m_val)
+    key <- paste0("cl", c_val, "_m", m_val)
     results[[key]] <- cl
 
-    # # dynamic naming of file
-    # filename <- paste0("cl", c_val, "_", m_val, ".pdf")
-    # 
-    # # save plot
-    # pdf(filename)
-    # mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, mfrow = c(2,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
-    #             time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
-    # dev.off()
-    # 
-    # # Plot for genes witn membership >= 0.7
-    # # dynamic naming of file
-    # filename07 <- paste0("cl", c_val, "_", m_val, "minmem07.pdf")
-    # 
-    # # save plot
-    # pdf(filename07)
-    # mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, min.mem = 0.7, mfrow = c(2,1), x11 = FALSE, centre=TRUE,
-    #                centre.col="black", centre.lwd=2, time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
-    # dev.off()
+# Commented plot-generating code, not needed for final clusters
+
+#     #dynamic naming of file
+#      filename <- paste0("cl", c_val, "_m", m_val, ".pdf")
+#     
+#      # save plot
+#      pdf(filename)
+#      mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, mfrow = c(2,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
+#                  time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
+#      dev.off()
+#     
+#      # Plot for genes witn membership >= 0.7
+#      # dynamic naming of file
+#      filename07 <- paste0("cl", c_val, "_m", m_val, "minmem07.pdf")
+#     
+#      # save plot
+#      pdf(filename07)
+#      mfuzz.plot2mod(vsd.eset.ave.std, cl = cl, min.mem = 0.7, mfrow = c(2,1), x11 = FALSE, centre=TRUE,
+#                     centre.col="black", centre.lwd=2, time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
+#      dev.off()
   }
 }
-# 
-# 
-# # Joined with overlap analysis below
-# 
-# # list of clustering results:
-# # results[["c14_m1.20"]] <- cl14_120
-# 
+
+
+# Joined with overlap analysis below
+
+# list of clustering results:
+# results[["c14_m1.20"]] <- cl14_120
+
 # # list to save overlap results
 # overlaps <- list()
 # 
 # 
-# for (key in names(results)) {
-#   # for (key in names(results_csel)) {
-#     
-#   # cl <- results_csel[[key]]
-#   cl <- results[[key]]
-#     
-#   # compute overlap
-#   ov <- overlap(cl)
-#   overlaps[[key]] <- ov
-#   
-#   # PDF file name eg. "c14_m1.20_overlap.pdf"
-#   filename <- paste0(key, "_overlap.pdf")
-#   
-#   pdf(filename)
-#   overlap.plot(cl, over = ov, thres = 0.05)
-#   dev.off()
-# }
+#  for (key in names(results)) {
+#    # for (key in names(results_csel)) {
+# 
+#    # cl <- results_csel[[key]]
+#    cl <- results[[key]]
+# 
+#    # compute overlap
+#    ov <- overlap(cl)
+#    overlaps[[key]] <- ov
+# 
+#    # PDF file name eg. "c14_m1.20_overlap.pdf"
+#    filename <- paste0(key, "_overlap.pdf")
+# 
+#    pdf(filename)
+#    overlap.plot(cl, over = ov, thres = 0.05)
+#    dev.off()
+#  }
 ```
 
 ### Plots in `eps` format
@@ -582,16 +546,13 @@ for (c_val in c_vals) {
 ```{r eps}
 # Code for generation of clusters for selected ("final") parameters and drawing plots in eps format
 
-library(Mfuzz)
-
-
-c_val = 10
+c_val = 13
 m_val = 1.25
 
 ## Uncomment on new session
-load("../rdata-saved/vsd.eset.ave.std.samALLsig.RDa")
+#load("../rdata-saved/vsd.eset.ave.std.sam_pair_min3pt.RDa")
 
-source("mfuzz.plot2_separate_lines.R") # modified plotting function, tailored to seprarate lines
+source("../../../vs-day-one/sam/scripts/mfuzz.plot2_separate_lines.R") # modified plotting function, tailored to seprarate lines
 
     set.seed(1) # for reproducibility
     
@@ -600,28 +561,28 @@ source("mfuzz.plot2_separate_lines.R") # modified plotting function, tailored to
     
     # dynamic naming of file
     
-for (cluster in 1:10) {
+for (cluster in 1:c_val) {
     
     filename <- paste0("cl", cluster, "_", c_val, "_", m_val, ".eps")
 
     # save plot
     postscript(filename, horizontal = FALSE, onefile = TRUE, paper = "special", height = 3.8, width = 8)
     mfuzz.plot2mod(vsd.eset.ave.std, single=cluster, cl = cl, mfrow = c(1,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
-                time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
+                time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2, ylim = c(-4,4))
     dev.off()
     
 }
     
     # Plot for genes witn membership >= 0.7
     # dynamic naming of file
-for (cluster in 1:10) {
+for (cluster in 1:c_val) {
     
     filename <- paste0("cl", cluster, "_", c_val, "_", m_val, "minmem07.eps")
 
     # save plot
     postscript(filename, horizontal = FALSE, onefile = TRUE, paper = "special", height = 3.8, width = 8)
     mfuzz.plot2mod(vsd.eset.ave.std, single=cluster, cl = cl, min.mem = 0.7, mfrow = c(1,1), x11 = FALSE, centre=TRUE, centre.col="black", centre.lwd=2,
-                time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2)
+                time.labels = colnames(vsd.eset.ave.std),  cex.axis = 0.6, las = 2, ylim = c(-4,4))
     dev.off()
     
     
@@ -649,18 +610,18 @@ for (cluster in 1:10) {
 ## Replace all occurrences of cluster name as needed ##
 
 # all genes in clusters, without membership filtering
-c10_m1.25 <- results[["c10_m1.25"]]
+cl13_m1.25 <- results[["cl13_m1.25"]]
 
 # this file contains only genes with mem >=0.7
-genes_in_clusters <- lapply(1:ncol(c10_m1.25$membership), function(i) {
-  geny <- rownames(c10_m1.25$membership)[c10_m1.25$membership[, i] >= 0.7]
+genes_in_clusters <- lapply(1:ncol(cl13_m1.25$membership), function(i) {
+  geny <- rownames(cl13_m1.25$membership)[cl13_m1.25$membership[, i] >= 0.7]
   return(geny)
 })
 
 # Name clusters
-names(genes_in_clusters) <- paste("Klaster", 1:ncol(c10_m1.25$membership))
+names(genes_in_clusters) <- paste("Klaster", 1:ncol(cl13_m1.25$membership))
 
-save(c10_m1.25, genes_in_clusters, file="../rdata-saved/mfuzz_c10_m1.25_samALLsig.RDa")
+save(cl13_m1.25, genes_in_clusters, file="../rdata-saved/mfuzz_cl13_m1.25_sam.RDa")
 
 ```
 

@@ -1,0 +1,117 @@
+---
+title: "Table summarising significant genes in clusters, leaf"
+format: html
+date: "2026-03-30"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+The aim of this code is to make table with log2FC values for significant genes in each comparison.
+This data will be joined with cluster number.
+
+This will be done for each project-tissue combination and eventually all four tables will be joined together.
+In the end gene annotation will be added
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+library(DESeq2)
+library(dplyr)
+library(tibble)
+```
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+Load `DESeq2` results - tables for contrasts, saved in [02-leaf-pairwise.qmd](02-leaf-pairwise.qmd)
+
+```{r load}
+load("../rdata-saved/contr_pair_leaf_sig005.RDa")
+```
+
+Join together log2FC values for significant genes in each comparison.
+
+```{r join}
+# !! "unquoting" operator enforces immediate evaluation of the left-side variable inside the function.
+# := "glue" operator (frequently used instead of = in rename), allows dynamical mapping of columns' names.
+
+in_names <- ls(pattern = "_sig$")
+
+y <- data.frame(Name = character())
+
+for (name in in_names) {
+  in_obj=as.data.frame(get(name))
+  
+  x = gsub("_leaf_sig", "_L_cold", name)
+  x2 = gsub("_1\\d\\.", "_", x) # dla numerów dwucyfrowych
+  x3 = gsub("_(\\d)_", "_0\\1_", x2) # dodaje 0-padding dla jednocyfrowych - do sort
+  new_name = gsub("_\\d\\.", "_", x3)
+  
+  fc = in_obj |>
+    rownames_to_column("Name") |>
+    select(Name, log2FoldChange) |>
+    rename(!!new_name := log2FoldChange)
+  
+  y = full_join(y, fc, by = "Name")
+}
+
+fc_leaf_cold = y |> select(1, all_of(sort(names(y)[-1]))) # sortowanie alfabetyczne kolumn
+
+rm(list = in_names)
+```
+
+
+Load and process cluster data saved in [07-leaf-mfuzz-3pt.qmd](07-leaf-mfuzz-3pt.qmd) step.
+
+```{r cluster-data}
+load("../rdata-saved/mfuzz_cl15_m1.25_leaf.RDa")
+
+## Extract assigned cluster number and all membership values
+cl_vec   <- cl15_m1.25$cluster               # vector
+mem_mat  <- cl15_m1.25$membership            # matrix
+
+## Check if names are in concert
+identical(names(cl_vec), rownames(mem_mat))
+
+## Create data frame
+df <- data.frame(
+  cluster = cl_vec,                     # 1st column - cluster
+  mem_mat,                              # next 10 columns - membership values
+  check.names = FALSE                   # allow "1", "2", … as colnames
+)
+
+## Rename membership columns
+colnames(df)[2:ncol(df)] <- paste0("mem_", seq_len(ncol(mem_mat)))
+
+## Filter, rename and select needed columns
+
+df2 <- df |>
+  rownames_to_column(var = "Name") |>
+  rename(cluster_L_cold = cluster)
+
+# From cluster-membership table extract only genes with membership >=0.7
+df_filt <- df2 |>
+  filter(if_any(starts_with("mem_"), ~ . >= 0.7) ) |> # condition on each
+  select(Name, cluster_L_cold)
+```
+
+Join with DE-analysis results.
+
+```{r de-cluster}
+leaf_cold = left_join(df_filt, fc_leaf_cold, by = "Name", relationship = "one-to-one")
+
+save(leaf_cold, file = "../rdata-saved/leaf_coldlrt.DE_cluster_table.RDa")
+```
+
+Result tables from different tissues and projects are joined in [14-ALL-projectslrt-genes-cluster-table.qmd](../../sam/scripts/14-ALL-projectslrt-genes-cluster-table.qmd).

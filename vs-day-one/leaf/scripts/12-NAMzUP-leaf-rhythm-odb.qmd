@@ -8,7 +8,7 @@ execute:
   fig.dpi: 300
 ---
 
-The aim of this code is to filter network files with orthologues of *Arabidopsis thaliana* genes annotated with "Rhythmic process" (GO:0048511) GO term. Orthologues were retrieved from files downloaded from [Orthodb](https://data.orthodb.org/v12/download/odb_data_dump/) and processed in [szkic-orthodb.sh](szkic-orthodb.sh). The script uses clustering results and String network data [@szklarczykSTRINGDatabase20232023] for Cytoscape analysis and visualization [@clineIntegrationBiologicalNetworks2007]. Files are prepared separately for each cluster using 0.7 membership cutoff.
+The aim of this code is to filter network files with orthologues of *Arabidopsis thaliana* genes annotated with "Rhythmic process" (GO:0048511) GO term. Orthologues were retrieved from files downloaded from [Orthodb](https://data.orthodb.org/v12/download/odb_data_dump/) and processed in [szkic-orthodb.sh](../../../input-data/at-ortho_rhythmic-process/szkic-orthodb.sh). The script uses clustering results and String network data [@szklarczykSTRINGDatabase20232023] for Cytoscape analysis and visualization [@clineIntegrationBiologicalNetworks2007]. Files are prepared separately for each cluster using 0.7 membership cutoff.
 This script uses GO-annotation and associated files from UniProt, prepared in [00-test-filter.qmd](../../../input-data/go-uniprot/00-test-filter.qmd) and [00-GO-and-mapping-UniProt.qmd](../../../input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd) and intermediate files from [10-NAMzUP-leaf-networks-cytoscape-loop.qmd](10-NAMzUP-leaf-networks-cytoscape-loop.qmd).
 Here option 1) using NAM - GO is realized
 

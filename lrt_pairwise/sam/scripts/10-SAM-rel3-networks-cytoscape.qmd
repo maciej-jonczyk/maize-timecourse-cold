@@ -1,7 +1,7 @@
 ---
 title: "Prepare network files for analysis in Cytoscape"
 format: html
-date: "2025-12-14"
+date: "2026-03-23"
 bibliography: ../../../refs-stat-anal.bib
 execute:
   fig-format: png
@@ -10,8 +10,13 @@ execute:
 
 The aim of this code is to prepare files (clustering results and String network data [@szklarczykSTRINGDatabase20232023]) for Cytoscape analysis and visualization [@clineIntegrationBiologicalNetworks2007]. Separately for each cluster.
 Using 0.7 membership cutoff.
-This script uses GO-annotation and associated files from UniProt, prepared in `../../../input-data/go-uniprot/00-test-filter.qmd` and `../../../input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd`.
-Here option 1) using NAM - GO is realized
+This script uses GO-annotation and associated files from UniProt, prepared in [00-test-filter.qmd](../../../input-data/go-uniprot/00-test-filter.qmd) and [00-GO-and-mapping-UniProt.qmd](../../../input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd).
+Here option 1) using NAM - GO is realized.
+From clusters genes with specific, selected annotations are selected.
+
+:::{.callout-note}
+This script is a greatly improved version of sum of the [10-NAMzUP-sam-networks-cytoscape-loop-ctrl.qmd](../../../project1-ctrl-stat/vs-day-one/sam/scripts/10-NAMzUP-sam-networks-cytoscape-loop-ctrl.qmd) and [10-NAMzUP-sam-rel3-networks-cytoscape-ctrl.qmd](../../../project1-ctrl-stat/vs-day-one/sam/scripts/10-NAMzUP-sam-rel3-networks-cytoscape-ctrl.qmd). Joining part was changed from `bash` to `R`.
+:::
 
 Built with R version `r getRversion()`
 
@@ -19,14 +24,8 @@ Built with R version `r getRversion()`
 
 Environment cleaning and set-up
 
-```{r packages}
-#| eval: false
-if (!require("BiocManager", quietly = TRUE))
-    install.packages("BiocManager")
-
-BiocManager::install("Mfuzz")
-BiocManager::install("marray")
-BiocManager::install("limma")
+```{r setup, include = FALSE}
+library(dplyr)
 ```
 
 ```{r}
@@ -38,11 +37,11 @@ rm(list=ls())
 
 ## Load data
 
-`c13_m1.35` contains data for clusters.
+`cl13_m1.25` contains data for clusters.
 
 
 ```{r load}
-load("../rdata-saved/mfuzz_c13_m1.35_leafALLsig.RDa")
+load("../rdata-saved/mfuzz_cl13_m1.25_sam.RDa")
 
 # gene description
 anno = read.table("../../../input-data/go-uniprot/NAM_descr_best", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
@@ -60,11 +59,11 @@ mkdir ../results/network/
 ```{r membership-table}
 ## All genes in clusters with membership values
 ## 1.  Sprawdź, co w nim jest
-# str(c13_m1.35)
+# str(cl13_m1.25)
 
 ## 2.  Pobierz wektor cluster (nazwany) i macierz membership
-cl_vec   <- c13_m1.35$cluster               # wektor długości 11936, nazwy = geny
-mem_mat  <- c13_m1.35$membership            # macierz 11936 × 10
+cl_vec   <- cl13_m1.25$cluster               # wektor długości 11936, nazwy = geny
+mem_mat  <- cl13_m1.25$membership            # macierz 11936 × 10
 
 ## 3.  Upewnij się, że nazwy wierszy obu obiektów są zgodne
 identical(names(cl_vec), rownames(mem_mat))
@@ -81,14 +80,12 @@ colnames(df)[2:ncol(df)] <- paste0("mem_", seq_len(ncol(mem_mat)))
 
 # make column from rownames
 
-library(dplyr)
-
 df2 <- df |>
   mutate(gene = rownames(df)) |>   # nowa kolumna "gene"
   select(gene, everything())             # opcjonalnie przestaw kolejność
 
 # select only rows where any of the memberships is >= 0.7
-c13_m1.35_mem07 <- df2 |>
+cl13_m1.25_mem07 <- df2 |>
   filter(
     if_any(starts_with("mem_"),
            ~ . >= 0.7)              # warunek na każdą z nich
@@ -97,24 +94,24 @@ c13_m1.35_mem07 <- df2 |>
 
 # Extract max value from membership columns and retain it in new column
 # 1 Wybieramy kolumny zaczynające się od "mem_"
-mem_cols <- grep("^mem_", names(c13_m1.35_mem07), value = TRUE)
+mem_cols <- grep("^mem_", names(cl13_m1.25_mem07), value = TRUE)
 
 # 2 Obliczamy maksimum w każdym wierszu (ignorujemy NA)
-max_mem <- apply(c13_m1.35_mem07[mem_cols], 1, max, na.rm = TRUE)
+max_mem <- apply(cl13_m1.25_mem07[mem_cols], 1, max, na.rm = TRUE)
 
 # 3 Tworzymy nową ramkę z wybranymi kolumnami + maksymalną wartością
-c13_m1.35_maxmem <- data.frame(
-  gene        = c13_m1.35_mem07$gene,
-  cluster     = c13_m1.35_mem07$cluster,
+cl13_m1.25_maxmem <- data.frame(
+  gene        = cl13_m1.25_mem07$gene,
+  cluster     = cl13_m1.25_mem07$cluster,
   max_mem     = max_mem,
   stringsAsFactors = FALSE
 )
 
 # Table will be joined with String network data by gene name so it must be sorted
 
-c13_m1.35_sort <- c13_m1.35_maxmem[order(c13_m1.35_maxmem$gene), ]
+cl13_m1.25_sort <- cl13_m1.25_maxmem[order(cl13_m1.25_maxmem$gene), ]
 
-write.table(c13_m1.35_sort, file="../results/network/c13_m1.35_sort", sep="\t", quote=FALSE, row.names=FALSE)
+write.table(cl13_m1.25_sort, file="../results/network/cl13_m1.25_sort", sep="\t", quote=FALSE, row.names=FALSE)
 
 ```
 
@@ -156,42 +153,37 @@ Preferentially UPs in STRING were selected already.
 cd ../results/network/
 
 # join and sort by UP
-join -1 2 -2 1 -t $'\t' ../../../../input-data/networks-up/best-nam-string-ids c13_m1.35_sort | sort -k2,2 -t $'\t'> c13_UP_srt
+join -1 2 -2 1 -t $'\t' ../../../../input-data/networks-up/best-nam-string-ids cl13_m1.25_sort | sort -k2,2 -t $'\t'> c13_UP_srt
 
 # checks - NAMs are unique but UP no
 wc -l c13_UP_srt
-# 3933
+# 10167
 cut -f1 -d $'\t' c13_UP_srt | sort -u | wc -l
-# 3933
+# 10167
 cut -f2 -d $'\t' c13_UP_srt | sort -u | wc -l
-# 3927 # some UPs map to multiple NAMs
+# 10133 # some UPs map to multiple NAMs
 
 # Check
 cut -f2 -d $'\t' c13_UP_srt | sort | uniq -d > x
-grep -Fwf x c13_UP_srt
-# Zm00001eb173710 B4FML8  8       0.922419768588153
-# Zm00001eb173730 B4FML8  8       0.705660698699791
-# Zm00001eb296560 B4G1P4  5       0.728658534402088
-# Zm00001eb296580 B4G1P4  1       0.860659460036542
-# Zm00001eb019230 B6SGI4  8       0.790375096952795
-# Zm00001eb229690 B6SGI4  8       0.711050526774375
-# Zm00001eb185510 B6T969  1       0.862093623477879
-# Zm00001eb185540 B6T969  10      0.877677319194626
-# Zm00001eb028980 B6TGT0  8       0.816783789906092
-# Zm00001eb136620 B6TGT0  8       0.726828882765232
-# Zm00001eb202910 Q9ZQX9  8       0.765588981641404
-# Zm00001eb241090 Q9ZQX9  6       0.830930901211403
+grep -Fwf x c13_UP_srt > x2
+cut -f2,3 -d $'\t' x2 | sort -u > x3 # unique sort keeps only one row for genes duplicated in the same cluster
+cut -f1 x3 | uniq -c | tr -s ' ' | grep -v ' 1' | cut -f3 -d ' ' > xduplicated # keep proteins present in > 1 row
 
-# So for B4G1P4, B6T969 and Q9ZQX9 duplicated NAMs are in different clusters
+# look/count at the duplicated proteins
+grep -f xduplicated x2 | wc -l
+# 46 NAMs
+wc -l xduplicated
+# 19 proteins corresponding to duplicated NAMs are in different clusters
 
 # exclude them
-grep -Fwv B4G1P4 c13_UP_srt | grep -Fwv B6T969 | grep -Fwv Q9ZQX9 > x2
+grep -Fwvf xduplicated c13_UP_srt > x2
 mv x2 c13_UP_srt
+rm x*
 ```
 
 ## Add network data
 
-```{bash join-net-cluster}
+```{bash prep for join}
 cd ../results/network/
   
 ## extract data for first interactors from network file
@@ -201,54 +193,55 @@ cut -f2 -d $'\t' c13_UP_srt | sort -u > c13_ids_up
 
 # extract interactions for selected UPs from full network
 zgrep -Fwf c13_ids_up ../../../../input-data/networks-up/full-network.gz > c13_UP_net_selected
+```
 
-
+```{r join-net-cluster}
 ## Add NAMs and description ##
-# for UP1
 
 # translate spaces to tabs in network data
-tr ' ' '\t' < c13_UP_net_selected > ~/x
-# sort by UP1
-sort -k1,1 -t $'\t' ~/x > ~/xUP1
 
-# join, keeping all network data, there are multiple UPs for some NAMs so number of rows in output is greater than in xUP1
-join -1 1 -2 2 -t $'\t' -a1 -o auto ~/xUP1 ../../../../input-data/go-uniprot/NAM-UP-anno > ~/x2
-# 1=UP1, 2=UP2, 17=NAM1, 18=descr1
+xUP1 = read.table("../results/network/c13_UP_net_selected", sep=' ', header = FALSE)
+colnames(xUP1) = c("uniprot1", "uniprot2", "neighborhood", "neighborhood_transferred", "fusion", "cooccurence", "homology", "coexpression", "coexpression_transferred", "experiments", "experiments_transferred", "database", "database_transferred", "textmining", "textmining_transferred", "combined_score")
 
-# for UP2
-# sort by UP2
-sort -k2,2 -t $'\t' ~/x2 > ~/xUP2
-# join - using HOME directory
-join -j 2 -t $'\t' -a1 -o auto ~/xUP2 ../../../../input-data/go-uniprot/NAM-UP-anno > ~/xUPsNAMs
-# 1,19,20 - UP2, 2,17,18 - UP1
+NAM_UP_anno = read.table("../../../input-data/go-uniprot/NAM-UP-anno", sep='\t', header = FALSE, quote = "")
+colnames(NAM_UP_anno) = c('ensembl', 'uniprot', 'desc')
+
+# UP1
+
+x2 = left_join(xUP1, NAM_UP_anno, 
+               by = c("uniprot1" = "uniprot"),
+               relationship = "many-to-many") |>
+      relocate(ensembl1 = ensembl, desc1 = desc, .after = uniprot1)
+
+# UP2
+
+xUPsNAMs = left_join(x2, NAM_UP_anno,
+                     by = c('uniprot2' = 'uniprot'),
+                     relationship = "many-to-many") |>
+      relocate(ensembl2 = ensembl, desc2 = desc, .after = uniprot2)
+
 
 ## Add cluster data ##
 
-# UP1
-# check sorting, using original results from R (without UPs)
-sort -k1,1 -t $'\t' -c c13_m1.35_sort
-# ok
+# NAM1
 
-# sort cluster data by NAM1
-sort -k17,17 -t $'\t' ~/xUPsNAMs > ~/xNAM1
+x2NAM1 = left_join(xUPsNAMs, cl13_m1.25_sort,
+                   by = c('ensembl1' = 'gene'),
+                   relationship = "many-to-one") |>
+      relocate(cluster1 = cluster, member1 = max_mem, .after = desc1)
 
-# join
-join -1 17 -2 1 -t $'\t' -a1 -o auto ~/xNAM1 c13_m1.35_sort > ~/x2NAM1
-# 1,21,22 - NAM1, 
+# NAM2
 
-# UP2
-# sort
-sort -k19,19 -t $'\t' ~/x2NAM1 > ~/xNAM2
+x3NAM = left_join(x2NAM1, cl13_m1.25_sort,
+                       by = c('ensembl2' = 'gene'),
+                       relationship = "many-to-one") |>
+      relocate(cluster2 = cluster, member2 = max_mem, .after = desc2) |>
+        filter(!is.na(cluster1))
 
-# join
-join -1 19 -2 1 -t $'\t' -a1 -o auto ~/xNAM2 c13_m1.35_sort > ~/x2NAM1NAM2
-# 1,3,20,23,24 NAM2, 2,4,19,21,22 NAM1
+# Save to file
+write.table(x3NAM, file="~/x4final", sep = '\t', na = "", quote = FALSE, row.names = FALSE)
 
-# select rows with NAM1 not empty - this is in the clusters
-awk -F'\t' '$21!=""' ~/x2NAM1NAM2 > ~/x3NAM # było $2
-
-# tidy-up
-awk -F'\t' -v OFS='\t' '{print $4,$2,$19,$21,$22,$3,$1,$20,$23,$24,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18}' ~/x3NAM > ~/x4final
+rm(list=ls())
 ```
 
 ```{bash checks}
@@ -264,7 +257,7 @@ cat ~/x1 ~/x2 | sort -u > ~/x3
 sed -f ../../../../input-data/networks-up/nam-up-dict ~/x3 > ~/x
 # select rows where UP2 are missing
 awk -v FS='\t' -v OFS='\t' '$1!=$2 {print $2}' ~/x | sort -u
-# should be empty
+# should be empty oh have only col. names
 
 # NAM - description
 # cut corresponding columns
@@ -285,7 +278,7 @@ cut -f7,9,10 -d $'\t' ~/x4final | sort -u > ~/x2
 # concatenate
 cat ~/x1 ~/x2 | sort -u > ~/x3
 # does data present in both files match?
-join -j1 -t $'\t' c13_m1.35_sort ~/x3 > ~/x4
+join -j1 -t $'\t' cl13_m1.25_sort ~/x3 > ~/x4
 # cut respective columns and compare with diff
 cut -f2,3 -d $'\t' ~/x4 > ~/x41
 cut -f4,5 -d $'\t' ~/x4 > ~/x42
@@ -294,9 +287,9 @@ diff -s ~/x41 ~/x42
 
 # Check NAMs not in cluster
 # extract NAMs without cluster from final file
-join -j1 -t $'\t' -a1 -a2 -o auto c13_m1.35_sort ~/x3 | awk -v FS='\t' -v OFS='\t' '$2=="" && $4==""' > ~/x5
+join -j1 -t $'\t' -a1 -a2 -o auto cl13_m1.25_sort ~/x3 | awk -v FS='\t' -v OFS='\t' '$2=="" && $4==""' > ~/x5
 # grep them from network assignment file
-grep -Fwf ~/x5 c13_m1.35_sort > ~/x2
+grep -Fwf ~/x5 cl13_m1.25_sort > ~/x2
 # check number of rows, should be 0
 wc -l ~/x2
 # 0 /home/mj/x2
@@ -323,19 +316,18 @@ shuf -n3 c13_net_allcl
 ### Examples
 ## input-data/go-uniprot dir
 # NAM - UP assignment
-grep Zm00001eb314790 BEST_UPs
-grep A0A1D6LKH6 BEST_UPs
+grep Zm00001eb314790 ../../../../input-data/go-uniprot/BEST_UPs
+grep A0A1D6LKH6 ../../../../input-data/go-uniprot/BEST_UPs
 
 # NAM and UP description
-grep Zm00001eb269840 NAM_descr_best
-grep A0A1D6LKH6 UP_descr_best
+grep Zm00001eb269840 ../../../../input-data/go-uniprot/NAM_descr_best
+grep A0A1D6LKH6 ../../../../input-data/go-uniprot/UP_descr_best
 
 ## Cluster assignment
-# leaf/results/network dir
-grep Zm00001eb269840 c13_m1.35_sort
+# sam/results/network dir
+grep Zm00001eb269840 cl13_m1.25_sort
 
 ```
-
 
 ## Split by cluster
 
@@ -347,105 +339,35 @@ awk -v FS='\t' -v OFS='\t' '$24>=400 { print > "cluster_"$4"_400.txt" }' c13_net
 
 # add header
 
+echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" > header-net-tab
+
 for i in {1..13}; do
-  echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" | cat - cluster_${i}_400.txt > temp && mv temp cluster_${i}_400.txt ;
+  cat header-net-tab cluster_${i}_400.txt > temp && mv temp cluster_${i}_400.txt ;
 done
 
 pigz --best c13_net_allcl
 ```
 
-## Subset networks by interesting GO-categories
-
-### Prepare GO with descendants of categories of interest.
-
-
-:::(.callout-caution}
-This is important, otherwise only genes with direct annotation would be selected.
-:::
-
-```{r split-GO}
-# If not done previously or if other categories are needed
-#
-# library(ontologyIndex)
-# 
-# # read obo file
-# go <- get_ontology("../../../input-data/go-uniprot/source-files/go.obo", extract_tags = "everything")
-# 
-# # get descendants of the Biological Process, Molecular Function and Cellular Component terms
-# dev_proc_descendants <- get_descendants(go, "GO:0032502") # developmental process
-# tran_fac_descendants <- get_descendants(go, "GO:0003700") # DNA-binding transcription factor activity
-# #cc_descendants <- get_descendants(go, "GO:0005575")
-# 
-# # save to files, needed for graph drawing with go_plot.py
-# write(dev_proc_descendants, file = "../../../input-data/go-uniprot/dev-proc_descendants.txt")
-# write(tran_fac_descendants, file = "../../../input-data/go-uniprot/tran-fac_descendants.txt")
-# #write(cc_descendants, file = "GO_CC_descendants.txt")
-# 
-# # Check package Goplot
-```
-
-```{bash go check}
-# If new categories were extracted
-
-# cd ../../../input-data/go-uniprot/
-# 
-# # DNA tran-fac activ
-# wr_hier.py GO:0003700 --dag source-files/go.obo --concise -o x
-# grep -Eo 'GO:[0-9]{7}' x | sort -u > x3
-# sort tran-fac_descendants.txt > x4
-# 
-# diff -s x3 x4
-# # Pliki x3 i x4 są identyczne
-# 
-# # developmental
-# wr_hier.py GO:0032502 --dag source-files/go.obo --concise -o x
-# grep -Eo 'GO:[0-9]{7}' x | sort -u > x3
-# sort dev-proc_descendants.txt > x4
-# 
-# diff -s x3 x4
-# # Pliki x3 i x4 są identyczne
-```
-
-### Extract from `NAM2GO_all_4making_pop`
-
-```{bash descendants}
-# If new categories were extracted
-
-# # NAMs with selected GOs
-# 
-# cd ../../../input-data/go-uniprot/
-# 
-# # DNA transcription-factor activity
-# grep -Fwf tran-fac_descendants.txt NAM2GO_all_4making_pop | cut -f1 -d $'\t' | sort -u > genes-tran-reg
-# 
-# # Developmental process
-# grep -Fwf dev-proc_descendants.txt NAM2GO_all_4making_pop | cut -f1 -d $'\t' | sort -u > genes-developmental
-# 
-# # Header for networks for selected GOs
-# cd ../../vs-day-one/leaf/results/network/
-# echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" > header-net-tab
-```
-
-```{bash tran-reg}
+```{bash tf-activ}
 
 cd ../results/network/
 
 for i in {1..13}; do
 awk '
-    NR==FNR {           # Czytamy pierwszy plik (genes-tran-reg)
+    NR==FNR {           # Czytamy pierwszy plik (rel3-genes-tf_activ)
         keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
        next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
     }
     $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 2
         print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
     }
-' ../../../../input-data/go-uniprot/genes-tran-reg cluster_${i}_400.txt > x
-  cat header-net-tab x > cluster_${i}_400_tran-reg.txt;
+' ../../../../input-data/go-uniprot/rel3-genes-tf_activ cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_rel3_tf-activ.txt;
 done
 
 ## Remove files without data
 
-files=($(ls cluster_*_400_tran-reg.txt))
+files=($(ls cluster_*_400_rel3_tf-activ.txt))
 
 for file in ${files[@]}; do
 # Przykład: liczymy linie w pliku data.txt
@@ -457,26 +379,25 @@ fi
 done
 ```
 
-```{bash rhythm extract}
-# Rhythmic process
+```{bash rhythm}
 cd ../results/network/
 
 for i in {1..13}; do
 awk '
-    NR==FNR {           # Czytamy pierwszy plik (genes-biol-reg)
+    NR==FNR {           # Czytamy pierwszy plik (rel3-genes-rhythm)
         keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
        next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
     }
     $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 2
         print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
     }
-' ../../../../input-data/go-uniprot/genes-rhythm-proc cluster_${i}_400.txt > x
-  cat header-net-tab x > cluster_${i}_400_rhythm.txt;
+' ../../../../input-data/go-uniprot/rel3-genes-rhythm cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_rel3_rhythm.txt;
 done
 
 ## Remove files without data
 
-files=($(ls cluster_*_400_rhythm.txt))
+files=($(ls cluster_*_400_rel3_rhythm.txt))
 
 for file in ${files[@]}; do
 # Przykład: liczymy linie w pliku data.txt
@@ -488,25 +409,25 @@ fi
 done
 ```
 
-```{bash photosynthesis}
-# select genes annotated with photosynthesis
-
+```{bash dev-rel}
 cd ../results/network/
 
 for i in {1..13}; do
 awk '
-    NR==FNR {           # Czytamy pierwszy plik (genes-biol-reg)
+    NR==FNR {           # Czytamy pierwszy plik (rel3-genes-dev)
         keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
        next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
     }
     $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 2
         print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
     }
-' ../../../../input-data/go-uniprot/genes-photosyn cluster_${i}_400.txt > x
-  cat header-net-tab x > cluster_${i}_400_photosyn.txt;
+' ../../../../input-data/go-uniprot/rel3-genes-dev cluster_${i}_400.txt > x
+  cat header-net-tab x > cluster_${i}_400_rel3_dev.txt;
 done
 
-files=($(ls cluster_*_400_photosyn.txt))
+## Remove files without data
+
+files=($(ls cluster_*_400_rel3_dev.txt))
 
 for file in ${files[@]}; do
 # Przykład: liczymy linie w pliku data.txt

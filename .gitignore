@@ -40,4 +40,6 @@ rozne-pliki/
 **/zestawienie\ GO\ na\ plakat_mj.xlsx
 .Rproj.user
 **/*add0*
-
+**/*.ods
+**/*.csv
+**/x*

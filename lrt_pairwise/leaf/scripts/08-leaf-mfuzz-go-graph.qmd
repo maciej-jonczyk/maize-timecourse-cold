@@ -1,7 +1,7 @@
 ---
 title: "GO analysis for expression changes in leaf in cold - ALL significant genes"
 format: html
-date: "2025-12-14"
+date: "2026-03-20"
 bibliography: ../../../refs-stat-anal.bib
 execute:
   fig-format: png
@@ -9,7 +9,7 @@ execute:
 ---
 
 ## Rationale
-This script uses GO-annotation and associated files from UniProt, prepared in `../../../input-data/go-uniprot/00-test-filter.qmd` and `../../../input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd`.
+This script uses GO-annotation and associated files from UniProt, prepared in [00-test-filter.qmd](../../../input-data/go-uniprot/00-test-filter.qmd) and [00-GO-and-mapping-UniProt.qmd](../../../input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd)..
 Here option 1) using NAM - GO is realized
 
 Built with R version `r getRversion()`
@@ -17,6 +17,12 @@ Built with R version `r getRversion()`
 ## R Preliminaries
 
 Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+library(dplyr)
+library(DESeq2)
+library(goseq)
+```
 
 ```{r}
 #| eval: false
@@ -34,8 +40,6 @@ Computation of median transcript length
 #| message: false
 
 df <- read.table("../../../input-data/go-uniprot/tran2gene2length", header = FALSE, col.names = c("ID", "Value"))
-
-library(dplyr)
 
 medians <- df |>
   group_by(ID) |>
@@ -73,17 +77,15 @@ These files are valid for a given genome annotation (genes in `gff` file), GO an
 ```{r expressed}
 # selection of expressed genes from each of three above objects is needed
 
-library(DESeq2)
-
 ## load filtered object (after minimal counts filter and DESeq function)
 load("../rdata-saved/dds.f.RDa")
 
 ## extract gene names, it will be used instead of assayed.genes
 expressed.genes <- sort(rownames(dds.f))
 
-## save expressed.genes to file for checking duplication in UP - NAM mapping
-# it is for checking usage of GO annotation from UniProt (file `input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd`)
-write.table(expressed.genes, file="../results/go/expressed_genes_leafALLsig.txt", col.names=FALSE, row.names=FALSE, quote=FALSE)
+## expressed.genes for checking duplication in UP - NAM mapping
+# it is available here:
+# ../../../vs-day-one/leaf/results/go/expressed_genes_leafALLsig.txt
 
 ## select respective values from length.vec
 expr.length.vec <- length.vec[names(length.vec) %in% expressed.genes]
@@ -98,7 +100,7 @@ Load the data from the mfuzz analysis for given number of clusters and fuzziness
 #| message: false
 
 # Change file appropriately
-load("../rdata-saved/mfuzz_c13_m1.35_leafALLsig.RDa")
+load("../rdata-saved/mfuzz_cl15_m1.25_leaf.RDa")
 
 # genes_in_clusters object is needed (contain genes with mem >=0.7)
 ```
@@ -212,7 +214,6 @@ go_terms_names <- read.table("../../../input-data/go-uniprot/GO_terms_names.txt"
 colnames(go_terms_names) <- c("category", "name", "namespace")
 
 ## Add GO names and namespace to each data frame in padj005
-library(dplyr)
 
 result.goseq25 <- lapply(result.goseq2, function(df) {
 left_join(
@@ -278,7 +279,7 @@ result_clean <- lapply(result_filt, function(df) {
 ```
 
 ```{r save-for-09}
-save(result.goseq, result.goseq25, result_clean, expr.go.cats, file="../rdata-saved/NAMzUP_mfuzz_res_for09_leafALLsig.RDa")
+save(result.goseq, result.goseq25, result_clean, expr.go.cats, file="../rdata-saved/mfuzz_res_for09_leaf.RDa")
 ```
 
 # GO trees
@@ -297,7 +298,7 @@ for (nm in names(result_clean)) {
   vec <- result_clean[[nm]]
 
   # file name – eg. "Klaster_13.txt"
-  fname <- paste0("../results/go/graphs/clusters/all_cats/NAMzUP_", gsub(" ", "_", nm), "summary.txt")
+  fname <- paste0("../results/go/graphs/clusters/all_cats/leaf_", gsub(" ", "_", nm), "summary.txt")
 
   write.table(vec,
               file = fname,
@@ -314,7 +315,7 @@ for (nm in names(result_clean)) {
   vec <- result_clean[[nm]][["category"]]
 
   # file name – eg. "Klaster_13.txt"
-  fname <- paste0("../results/go/graphs/clusters/all_cats/NAMzUP_", gsub(" ", "_", nm), ".txt")
+  fname <- paste0("../results/go/graphs/clusters/all_cats/leaf_", gsub(" ", "_", nm), ".txt")
 
   write.table(vec,
               file = fname,

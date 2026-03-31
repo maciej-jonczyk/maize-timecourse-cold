@@ -1,0 +1,14 @@
+---
+title: "Arabidopsis STRING network and maize orthologues."
+format: html
+date: "2026-02-20"
+---
+
+The aim of this code is to prepare Arabidopsis STRING network for use in Cytoscape with maize orthologues.
+
+```{bash prepare-string}
+# STRING network for A.thaliana was downloaded from STRING manually
+zcat 3702.protein.links.full.v12.0.txt.gz | sed 's/3702\.//g' > ~/full-network-At
+pigz --best ~/full-network-At
+mv ~/full-network-At.gz .
+```

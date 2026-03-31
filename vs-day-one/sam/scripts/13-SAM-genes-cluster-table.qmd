@@ -1,0 +1,110 @@
+---
+title: "Table summarising significant genes in clusters"
+format: html
+date: "2026-03-13"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+The aim of this code is to make table with log2FC values for significant genes in each comparison.
+This data will be joined with cluster number.
+
+This will be done for each project-tissue combination and eventually all four tables will be joined together.
+In the end gene annotation will be added
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+Load `DESeq2` results - tables for contrasts, saved in [02-SAM-only-loop-regr-cold.qmd](02-SAM-only-loop-regr-cold.qmd)
+
+```{r load}
+library(DESeq2)
+
+load("../rdata-saved/sigs_all_SAM1.RDa")
+```
+
+Join together log2FC values for significant genes in each comparison.
+
+```{r join}
+# !! "unquoting" operator enforces immediate evaluation of the left-side variable inside the function.
+# := "glue" operator (frequently used instead of = in rename), allows dynamical mapping of columns' names.
+
+library(dplyr)
+library(tibble)
+in_names <- ls(pattern = "_sig$")
+
+fc_sam_cold <- data.frame(Name = character())
+
+for (name in in_names) {
+  in_obj=as.data.frame(get(name))
+  
+  x = gsub("_sam_sig", "_S_cold", name)
+  new_name = gsub("d1", "", x)
+  
+  fc = in_obj |>
+    rownames_to_column("Name") |>
+      select(Name, log2FoldChange) |>
+        rename(!!new_name := log2FoldChange)
+  
+  fc_sam_cold = full_join(fc_sam_cold, fc, by = "Name")
+}
+
+rm(list = in_names)
+```
+
+
+Load and process cluster data saved in [07-SAM-only-mfuzzALLsig.qmd](07-SAM-only-mfuzzALLsig.qmd) step.
+
+```{r cluster-data}
+load("../rdata-saved/mfuzz_c10_m1.25_samALLsig.RDa")
+
+## Extract assigned cluster number and all membership values
+cl_vec   <- c10_m1.25$cluster               # vector
+mem_mat  <- c10_m1.25$membership            # matrix
+
+## Check if names are in concert
+identical(names(cl_vec), rownames(mem_mat))
+
+## Create data frame
+df <- data.frame(
+  cluster = cl_vec,                     # 1st column - cluster
+  mem_mat,                              # next 10 columns - membership values
+  check.names = FALSE                   # allow "1", "2", … as colnames
+)
+
+## Rename membership columns
+colnames(df)[2:ncol(df)] <- paste0("mem_", seq_len(ncol(mem_mat)))
+
+## Filter, rename and select needed columns
+
+df2 <- df |>
+  rownames_to_column(var = "Name") |>
+    rename(cluster_S_cold = cluster)
+
+# From cluster-membership table extract only genes with membership >=0.7
+df_filt <- df2 |>
+  filter(if_any(starts_with("mem_"), ~ . >= 0.7) ) |> # condition on each
+    select(Name, cluster_S_cold)
+```
+
+Join with DE-analysis results.
+
+```{r de-cluster}
+sam_cold = left_join(df_filt, fc_sam_cold, by = "Name", relationship = "one-to-one")
+
+save(sam_cold, file = "../rdata-saved/sam_cold.DE_cluster_table.RDa")
+```
+
+Result tables from different tissues and projects are joinded in [14-ALL-projects-genes-cluster-table.qmd](14-ALL-projects-genes-cluster-table.qmd).

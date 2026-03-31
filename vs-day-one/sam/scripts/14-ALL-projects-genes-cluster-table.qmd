@@ -1,0 +1,85 @@
+---
+title: "Join tables summarising significant genes in clusters, plus annotation"
+format: html
+date: "2026-03-31"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+This code used files made in:
+- [13-SAM-ctrllrt-genes-cluster-table.qmd](13-SAM-ctrllrt-genes-cluster-table.qmd) - results for SAM in cold
+- [13-leaf-ctrllrt-genes-cluster-table.qmd](../../leaf/scripts/13-leaf-ctrllrt-genes-cluster-table.qmd) - results for leaf in cold
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+library(DESeq2)
+library(dplyr)
+library(tibble)
+```
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+Load `DESeq2` results - tables for contrasts.
+
+```{r load}
+# Don't work from quarto notebook in my case, loaded from R-console
+load("../rdata-saved/sam_coldlrt.DE_cluster_table.RDa")
+load("../../leaf/rdata-saved/leaf_coldlrt.DE_cluster_table.RDa")
+```
+
+Join together log2FC values for significant genes in each comparison.
+
+```{r join}
+# !! "unquoting" operator enforces immediate evaluation of the left-side variable inside the function.
+# := "glue" operator (frequently used instead of = in rename), allows dynamical mapping of columns' names.
+
+in_names <- c("leaf_cold", "sam_cold")
+
+fc_decl <- data.frame(Name = character())
+
+for (name in in_names) {
+  in_obj=as.data.frame(get(name))
+
+  fc_decl = full_join(fc_decl, in_obj, by = "Name")
+}
+
+rm(list = in_names)
+```
+
+Add annotation.
+
+```{r anno}
+# load annotation
+anno = read.table("../../../input-data/go-uniprot/NAM_descr_best", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+colnames(anno) <- c("Name", "description")
+
+# join with DE-data
+fc_decl_anno <- left_join(fc_decl, anno, by = "Name")
+
+# join with UPs
+ups = read.table("../../../input-data/go-uniprot/NAM2UP_all_forGOextraction", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+colnames(ups) <- c("Name", "UniProt")
+
+fc_decl_anno_up <- left_join(fc_decl_anno, ups, by = "Name") |>
+  relocate(UniProt, .after = Name)
+```
+
+Save to file
+
+```{r save}
+# In my case it also don't work from quarto
+write.table(fc_decl_anno_up, file = "../../genes_cluster_table_lrt_coldctrl.csv", quote = FALSE, sep = "\t", row.names = FALSE)
+```

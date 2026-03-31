@@ -1,0 +1,528 @@
+---
+title: "Prepare network files for analysis in Cytoscape. Arabidopsis STRING network as basis."
+format: html
+date: "2026-02-24"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+The aim of this code is to overlay maize orthologues on STRING network of *Arabidopsis thaliana*.
+Orthologues of *Arabidopsis thaliana* genes annotated with "Rhythmic process" (GO:0048511) GO term were retrieved from UniProt. The script uses clustering results and String network data [@szklarczykSTRINGDatabase20232023] for Cytoscape analysis and visualization [@clineIntegrationBiologicalNetworks2007]. Files are prepared separately for each cluster using 0.7 membership cutoff.
+This script uses GO-annotation and associated files from UniProt, prepared in [00-test-filter.qmd](../../../input-data/go-uniprot/00-test-filter.qmd) and [00-GO-and-mapping-UniProt.qmd](../../../input-data/go-uniprot/00-GO-and-mapping-UniProt.qmd) and intermediate files from [10-NAMzUP-leaf-networks-cytoscape-loop.qmd](10-NAMzUP-leaf-networks-cytoscape-loop.qmd).
+Here option 1) using NAM - GO is realized
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r packages}
+#| eval: false
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("Mfuzz")
+BiocManager::install("marray")
+BiocManager::install("limma")
+BiocManager::install("RCy3")
+BiocManager::install("biomaRt")
+```
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+## Load data
+
+`c13_m1.35` contains data for clusters.
+
+
+## Prepare and export cluster data
+
+```{bash net-dir}
+rm -r ../results/network-rhythm-at-string/
+mkdir ../results/network-rhythm-at-string/
+```
+
+## Filter network data with significant genes and add orthology
+
+`full-network-At.gz` file contains *edge data* for all interactions. *node data* is needed, `mart-all-gramene_up-zea` contains most data
+
+```{bash rhythm net}
+# retrieve subnetwork for At "rhythmic" proteins with orthologues in maize
+## protein can be either "source" or "target"
+cd ../../../input-data/at-ortho_rhythmic-process/
+cut -f7 -d $'\t' mart-all-gramene_up-zea | sort -u > at_UP_ortho_zm
+zgrep -wf at_UP_ortho_zm full-network-At.gz > UP_At-rhythm_net
+
+## interactions for clock only
+awk '
+    NR==FNR {           # Czytamy pierwszy plik (at_UP_ortho_zm )
+        keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
+       next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
+    }
+    $1 in keep && $2 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 1 i 2
+        print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
+    }
+' at_UP_ortho_zm  UP_At-rhythm_net > UP_At-rhythm_BothProt_net
+
+## interactions where source node is a clock gene
+awk '
+    NR==FNR {           # Czytamy pierwszy plik (at_UP_ortho_zm )
+        keep[$1] = 1;       # budujemy tablicę asocjacyjną – klucz = wartość
+       next;             # przejdź do kolejnego rekordu (nie analizujemy dalej)
+    }
+    $1 in keep {         # Drugi plik (klastry); sprawdzamy kolumnę 1 i 2
+        print               # wypisujemy cały wiersz, jeśli wartość jest w tablicy
+    }
+' at_UP_ortho_zm  UP_At-rhythm_net > UP_At-rhythm_SourceProt_net
+```
+
+```{r sigs}
+# This chunk is specific for experiment
+# List of all significant genes, those kept in clusters (surviving the 0.7 membership cutoff) are not sufficient as target node are allowed to be anything.
+
+load("../rdata-saved/sigs-leaf1_all.RDa")
+
+library(tibble)
+
+object_names <- ls(pattern = "sig$")
+
+for (name in object_names) {
+  out_name <- paste0(gsub("_sig", "", name), "_out")
+  result <- as.data.frame(get(name)) |> rownames_to_column("Name")
+  assign(out_name, result, envir = .GlobalEnv)
+}
+
+rm(list=ls(pattern = "sig$")) # remove intermediate objects
+
+# join all and extract only gene names without duplicates
+
+object_names <- mget(ls(pattern = "out$"))
+
+library(dplyr)
+
+all_sigs <- bind_rows(object_names) |> 
+  select(Name) |>
+    distinct()
+
+rm(list=ls(pattern = "out$")) # remove intermediate objects
+```
+
+```{r edge info}
+# read network file - Source = clock, Target = anything
+edge.info = read.table("../../../input-data/at-ortho_rhythmic-process/UP_At-rhythm_SourceProt_net", header=FALSE, stringsAsFactors = FALSE, sep=' ', quote = "")
+
+colnames(edge.info)=c("up_at1", "up_at2", "neighborhood", "neighborhood_transferred", "fusion", "cooccurence", "homology", "coexpression", "coexpression_transferred", "experiments", "experiments_transferred", "database", "database_transferred", "textmining", "textmining_transferred", "combined_score")
+
+# The resulting file is exactly as needed for RCy3
+```
+
+```{r target node info}
+### Retrieve orthologs in Zea mays ###
+# this info is available for clock proteins but not for all target proteins
+
+library(biomaRt)
+# Load database
+
+#---------- --------------------------- get appropriate parameters -----------------------------#
+# # identify name of plant database
+listEnsemblGenomes()
+
+# select database for plants
+ensembl_plants <- useEnsemblGenomes(biomart = "plants_mart")
+# what info for Arabidopsis (we use network for this species) is available?
+searchDatasets(ensembl_plants, pattern = "Arabidopsis")
+#-----------------------------------------------------------------------------------------------#
+
+# select appropriate database
+ensembl_arabidopsis <- useEnsemblGenomes(
+  biomart = "plants_mart",
+  dataset = "athaliana_eg_gene"
+)
+
+# Build query
+
+# what filters are available?
+filters <- listFilters(ensembl_arabidopsis)
+
+# what can be extracted?
+attributes <- listAttributes(ensembl_arabidopsis)
+
+## which one are for maize
+attr_zea = searchAttributes(ensembl_arabidopsis, pattern = "Zea")
+# podzbior <- df %>% filter(grepl("^k", tekst)) # alternatiuve command
+
+# extract IDs of target node (Arabidopsis UPs)
+targets <- unique(net$up_at2)
+
+# try direct function for homologs
+#at2zm = getHomologs(targets, arabidopsis_thaliana, zea_mays)
+# the function is listed in manual but tR can't find it (?)
+
+# The procedure is 3-step
+## 1. retrieve ortholog info
+## 2. retrieve mapping between ensembl and uniorot IDs
+## 3. join the two tables to get uniprot IDs and orthologs
+## 4. rbind all three files
+
+## 1.
+# As there is no info. what IDs in STRING are I'll retrieve orthologs using three filters
+# generic function
+# "UniProt Gene ID"
+at2zm_up_gn_id = getBM(
+  attributes = c("ensembl_gene_id", 
+                 "zmays_eg_homolog_ensembl_gene", 
+                 "zmays_eg_homolog_perc_id",
+                 "zmays_eg_homolog_perc_id_r1",
+                 "zmays_eg_homolog_orthology_confidence",
+                 "description"),
+  filters = "uniprot_gn_id",
+  values = targets,
+  mart = ensembl_arabidopsis,
+  uniqueRows = TRUE
+)
+
+# SwissProt ID
+at2zm_swiss = getBM(
+  attributes = c("ensembl_gene_id", 
+                 "zmays_eg_homolog_ensembl_gene", 
+                 "zmays_eg_homolog_perc_id",
+                 "zmays_eg_homolog_perc_id_r1",
+                 "zmays_eg_homolog_orthology_confidence",
+                 "description"),
+  filters = "uniprotswissprot",
+  values = targets,
+  mart = ensembl_arabidopsis,
+  uniqueRows = TRUE
+)
+
+# TrEMBL ID
+at2zm_trembl = getBM(
+  attributes = c("ensembl_gene_id", 
+                 "zmays_eg_homolog_ensembl_gene", 
+                 "zmays_eg_homolog_perc_id",
+                 "zmays_eg_homolog_perc_id_r1",
+                 "zmays_eg_homolog_orthology_confidence",
+                 "description"),
+  filters = "uniprotsptrembl",
+  values = targets,
+  mart = ensembl_arabidopsis,
+  uniqueRows = TRUE
+)
+
+## 2.
+# ID-mapping
+# "UniProt Gene ID"
+at2zm_up_gn_id_MAP = getBM(
+  attributes = c("ensembl_gene_id", 
+                 "uniprot_gn_id"),
+  filters = "uniprot_gn_id",
+  values = targets,
+  mart = ensembl_arabidopsis,
+  uniqueRows = TRUE
+)
+
+# SwissProt ID
+at2zm_swiss_MAP = getBM(
+  attributes = c("ensembl_gene_id", 
+                 "uniprotswissprot"),
+  filters = "uniprotswissprot",
+  values = targets,
+  mart = ensembl_arabidopsis,
+  uniqueRows = TRUE
+)
+
+# TrEMBL ID
+at2zm_trembl_MAP = getBM(
+  attributes = c("ensembl_gene_id", 
+                 "uniprotsptrembl"),
+  filters = "uniprotsptrembl",
+  values = targets,
+  mart = ensembl_arabidopsis,
+  uniqueRows = TRUE
+)
+
+
+## 3.
+# join
+
+# "UniProt Gene ID"
+set2rbind_up_gn_id = inner_join(at2zm_up_gn_id_MAP, at2zm_up_gn_id, by = "ensembl_gene_id", relationship="many-to-many") |>
+  rename(up_at = uniprot_gn_id)
+
+# SwissProt ID
+set2rbind_swiss = inner_join(at2zm_swiss_MAP, at2zm_swiss, by = "ensembl_gene_id", relationship="many-to-many") |>
+  rename(up_at = uniprotswissprot)
+
+# TrEMBL ID
+set2rbind_trembl = inner_join(at2zm_trembl_MAP, at2zm_trembl, by = "ensembl_gene_id", relationship="many-to-many") |>
+  rename(up_at = uniprotsptrembl)
+
+## 4.
+# rbind
+
+object_names <- mget(ls(pattern = "^set2rbind"))
+
+trg_all_ort <- bind_rows(object_names) |> 
+  filter(zmays_eg_homolog_ensembl_gene != "") |>
+    distinct() |>
+      arrange(up_at)
+
+# Add maize ensembl-uniprot info
+## read mapping
+zm_nam2up = read.table("../../../input-data/go-uniprot/NAM-UP-anno", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+
+# # column arrangement
+#desired_order <- c('id', 'ensembl', 'desc', 'ens_at', 'ort_conf', 'perc1', 'perc2', 'up_at', 'descr_at')
+desired_order <- c('id', 'ensembl', 'desc', 'ens_zm', 'ort_conf', 'perc1', 'perc2', 'up_zm', 'desc_zm')
+
+# join
+library(dplyr)
+trg_all_ort_zm = inner_join(trg_all_ort, zm_nam2up, by = c("zmays_eg_homolog_ensembl_gene" = "V1"), relationship="many-to-many") |>
+  rename(ensembl = ensembl_gene_id,
+         id = up_at,
+         ens_zm = zmays_eg_homolog_ensembl_gene,
+         perc1 = zmays_eg_homolog_perc_id,
+         perc2 = zmays_eg_homolog_perc_id_r1,
+         ort_conf = zmays_eg_homolog_orthology_confidence,
+         desc = description,
+         up_zm = V2,
+         desc_zm = V3) |>
+    select(all_of(desired_order))
+```
+
+```{r source node info}
+# read ortholog info
+ortho=read.table('../../../input-data/at-ortho_rhythmic-process/mart-all-gramene_up-zea', sep='\t', header=FALSE, stringsAsFactors = FALSE)
+
+#colnames(ortho)=c("ensembl", "id", "ens_at", "ort_conf", "perc1", "perc2", "up_at", "descr_at")
+colnames(ortho)=c("ens_zm", "up_zm", "ensembl", "ort_conf", "perc1", "perc2", "id", "desc")
+
+# read maize annotation
+anno = read.table("../../../input-data/go-uniprot/NAM_descr_best", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+
+# colnames(anno) <- c("ensembl", "desc")
+colnames(anno) <- c("ens_zm", "desc_zm")
+
+src_all_ort_zm = inner_join(ortho, anno, by = join_by(ens_zm)) |>
+  select(all_of(desired_order)) # order defined in `target node info` chunk
+
+```
+
+```{r join nodes}
+
+x <- unique(rbind(src_all_ort_zm, trg_all_ort_zm))
+
+# read cluster info
+clust = read.table("../results/network/c13_m1.35_sort", header=TRUE, stringsAsFactors = FALSE, sep='\t', quote = "")
+
+colnames(clust)=c("ens_zm", "cluster", "member")
+
+# join using maize ensembl ID
+
+library(dplyr)
+node.info <- left_join(x, clust, by = join_by(ens_zm)) |>
+  relocate(cluster, member, .after = desc)
+
+# TRZEBA WYKLUCZYĆ TE SRC, KTÓRE SĄ ZDUPLIKOWANE W RÓŻNYCH KLASTRACH
+# exclude At proteins present in different clusters
+## remove NAs
+noNA = node.info |> 
+  select(id, cluster) |> 
+    filter(!is.na(cluster))
+
+## remove duplicates
+nn_unique <- noNA |> distinct(id, cluster, .keep_all = TRUE) # takes into account both columns
+
+## keep only IDs in only one cluster
+nodes2save <- nn_unique |> 
+  group_by(id) |> 
+    filter(n_distinct(cluster) == 1)
+
+# Select matching rows from node.info
+node.info.filtered = inner_join(nodes2save, node.info, by = join_by("id", "cluster"), relationship = "one-to-many")
+
+## UPs which have no cluster and do not have cluster in other row (i.e. nodes have only NA in cluster)
+
+node.naonly = node.info |> 
+  select(id, cluster) |>
+    distinct(id, cluster, .keep_all = TRUE) |>
+      group_by(id) |>
+        filter(n() == 1, is.na(cluster))
+
+# Select matching rows from node.info
+node.info.naonly.filt = inner_join(node.naonly, node.info, by = join_by("id", "cluster"), relationship = "one-to-many")
+
+# concatenate
+node.info2 = bind_rows(node.info.filtered, node.info.naonly.filt) |>
+  ungroup()
+
+# few random rows for manual checking
+node.info2 |> sample_n(3)
+
+```
+
+```{r join node edge}
+# source node without NAs
+src_node.info = node.info2 |> filter(!is.na(cluster))
+
+# join with edge.info
+edge.info2 = inner_join(edge.info, src_node.info, by = join_by(up_at1 == id), relationship = "many-to-many")
+```
+
+## Split by cluster
+
+```{bash split no filter}
+cd ../results/network-rhythm-at-string
+
+# WITHOUT score filtering
+awk -v FS='\t' -v OFS='\t' '{print > "cluster_"$18"_ortho_at.txt" }' c13_net_allcl_ortho_at.txt
+
+# save file for first row as header
+mv cluster_cluster1_ortho_at.txt header
+
+# add header
+
+for i in 4 6 9 10 13; do
+  cat header cluster_${i}_ortho_at.txt > temp && mv temp cluster_${i}_ortho_at.txt ;
+done
+
+```
+
+```{bash split}
+cd ../results/network-rhythm-at/
+
+# using 400 score cutoff
+awk -v FS='\t' -v OFS='\t' '$24>=400 { print > "cluster_"$4"_400_ortho_at.txt" }' c13_net_allcl_ortho_at.txt
+
+# save file for first row as header
+mv cluster_cluster1_400_ortho_at.txt header
+
+# add header
+
+for i in 4 6 9 13; do
+  cat header cluster_${i}_400_ortho_at.txt > temp && mv temp cluster_${i}_400_ortho_at.txt ;
+done
+
+```
+
+:::{.callout-important}
+This method gives few connections in networks. The bottleneck is the low number of maize proteins in STRING networks.
+However without filtering the results are better - worth checking in Cytoscape.
+:::
+
+## Cytoscape networks
+
+```{r}
+#| output: false
+
+# load package
+library(RCy3)
+
+# check connection to Cytoscape
+cytoscapePing()
+
+```
+
+```{r test all-net}
+# NETWORK itself
+
+library(dplyr)
+node.info = as.data.frame(node.info2 |> arrange(id))
+
+# BYĆ MOŻE NIE PODOBA MU SIĘ, ŻE edge.info i node.info MAJĄ RÓŻNE GENY LUB TO ŻE SĄ DUPLIKATY.
+# POTENCJALNE ROZWIĄZNIE JOIN edge.info WG UP SOURCE I TRG Z node.info
+# BYĆ MOZE PROBLEM ZE ZNAKAMI Z OPISOW descr
+
+createNetworkFromDataFrames(
+  title="Full network - leaf",
+  collection="leaf, rhythm, At orthologues",
+  nodes=node.info,
+  source.id.list="up_at1",
+  target.id.list="up_at2",
+  edges=edge.info
+)
+```
+
+```{r nets}
+# Clean working directory
+rm(list=ls())
+
+# cluster 10 has too few nodes (<4) what prevents Cytoscape analyssi
+for (i in c(4, 6, 9, 13)) {
+  input_file=paste0("../results/network-rhythm-at/cluster_", i, "_ortho_at.txt")
+  
+  cl = read.table(input_file, header=TRUE, stringsAsFactors = FALSE, sep='\t', quote = "")
+  
+# NODE info, rbind columns from source node and target node
+src=unique(cl[c('uniprot1', 'ensembl1', 'desc1', 'cluster1', 'member1', "ens_at1", "ort_conf1", "perc1_1", "perc2_1", "up_at1", "descr_at1")])
+trg=unique(cl[c('uniprot2', 'ensembl2', 'desc2', 'cluster2', 'member2', "ens_at2", "ort_conf2", "perc1_2", "perc2_2", "up_at2", "descr_at2")])
+# names must be the same
+names(src) <- c('id', 'ensembl', 'desc', 'cluster', 'member', 'ens_at', 'ort_conf', 'perc1', 'perc2', 'up_at', 'descr_at')
+names(trg) <- c('id', 'ensembl', 'desc', 'cluster', 'member', 'ens_at', 'ort_conf', 'perc1', 'perc2', 'up_at', 'descr_at')
+# rbind
+node.info <- unique(rbind(src, trg))
+
+# sort node info table - in case of UPs multimapping to NAMs select NAM with cluster (sorts numerically, NAs are before numbers. During network generation the last row for each id is selected)
+## POTENTIAL PROBLEM, if UP have NAMs from >1 cluster it selects the one with the highest cluster number!!!
+## REQUIRE MANUAL CHECKING
+ord <- order(node.info[[1]],                 # kolumna 1 – sortowanie leksykograficzne
+             as.numeric(node.info[[4]]),    # kolumna 4 – sortowanie numeryczne
+             na.last = FALSE)
+
+node.info_srt <- node.info[ord, ]
+
+# EDGE table
+edge.info=unique(cl[,!names(cl) %in% c('ensembl1', 'desc1', 'cluster1', 'member1', "ens_at1", "ort_conf1", "perc1_1", "perc2_1", "up_at1", "descr_at1", 'ensembl2', 'desc2', 'cluster2', 'member2', "ens_at2", "ort_conf2", "perc1_2", "perc2_2", "up_at2", "descr_at2")])
+
+# NETWORK itself
+
+createNetworkFromDataFrames(
+  title=gsub("../results/network-rhythm-at/", "", input_file),
+  collection="leaf, rhythm, At orthologues",
+  nodes=node.info_srt,
+  source.id.list="uniprot1",
+  target.id.list="uniprot2",
+  edges=edge.info
+)
+
+library(paletteer)
+# Użycie palety kolorów
+colors <- paletteer_dynamic("cartography::orange.pal", 13)
+
+# Usunięcie ostatnich dwóch znaków - inaczej jest za dużo i kody są niepoprawne (przynajmniej dla tej funkcji)
+colors <- substr(colors, 1, 7)
+
+# Ustawienie mapowania kolorów
+setNodeColorMapping(
+  "cluster",
+  c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"),
+  colors,
+  mapping.type = "c"
+)
+
+setNodeColorBypass(
+  t(subset(node.info_srt, cluster == i, select=c("id"))),
+  "#78c679"
+)
+
+# run "Analyze network" to get degree values
+analyzeNetwork()
+
+setNodeSizeMapping(
+  "Degree",
+  c(1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100),
+  c(20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70),
+  mapping.type="c"
+)
+}
+```
+
+## References
