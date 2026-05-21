@@ -114,4 +114,4 @@ sam_cold = left_join(df_filt, fc_sam_cold, by = "Name", relationship = "one-to-o
 save(sam_cold, file = "../rdata-saved/sam_coldlrt.DE_cluster_table.RDa")
 ```
 
-Result tables from different tissues and projects are joinded in [14-ALL-projectslrt-genes-cluster-table.qmd](14-ALL-projectslrt-genes-cluster-table.qmd).
+Result tables from different tissues and projects are joined in [14-ALL-projectslrt-genes-cluster-table.qmd](14-ALL-projectslrt-genes-cluster-table.qmd).

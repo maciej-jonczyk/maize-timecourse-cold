@@ -134,7 +134,7 @@ all(rownames(coldata) %in% colnames(cts))
 all(rownames(coldata) == colnames(cts))
 ```
 
-### Change leafples' order
+### Change samples' order
 
 ```{r sort}
 # sort colData
@@ -161,7 +161,7 @@ coldata.leaf=subset(coldata.srt, tissue=="leaf")
 # check
 dim(coldata.leaf)
 
-# add variable describing chronology of leafples
+# add variable describing chronology of samples
 coldata.leaf$timepoint = as.integer(as.numeric(coldata.leaf$time)) + ( as.integer(as.numeric(coldata.leaf$day)) - 1 ) * 3
 # make 'timepoint' a factor
 coldata.leaf$timepoint = as.factor(coldata.leaf$timepoint)
@@ -169,10 +169,10 @@ coldata.leaf$timepoint = as.factor(coldata.leaf$timepoint)
 # Adding grouping variable to easily analyse all comparisons needed
 coldata.leaf$group <- factor(paste0(coldata.leaf$line, "_", coldata.leaf$timepoint))
 
-# vector of leafple names to keep - needed to select columns from count file
+# vector of sample names to keep - needed to select columns from count file
 keep.leaf=rownames(coldata.leaf)
 
-# check - only leafples named "s..." should remain
+# check - only samples named "s..." should remain
 keep.leaf
 length(keep.leaf)
 
@@ -209,7 +209,7 @@ table(colData(dds)$tissue)
 ### Pre-filtering
 
 ```{r pre-filtering, cache=TRUE}
-# at least 3 leafples with a count of 10 or higher
+# at least 3 samples with a count of 10 or higher
 keep <- rowSums(counts(dds) >= 10) >= 3
 dds.f <- dds[keep,]
 

@@ -44,6 +44,9 @@ To check if there are time-dependent changes between lines we test the timepoint
 library(DESeq2)
 library(GenomicRanges)
 library(BiocParallel)
+library(limma)
+library(dplyr)
+library(tibble)
 ```
 
 ```{r install packages}
@@ -268,6 +271,89 @@ to_save = ls(pattern = "sig$")
 save(list = to_save, file="../rdata-saved/contr_pair_sam_sig005.RDa")
 
 #rm(list = setdiff(ls(), to_save))
+```
+
+## Compute and export normalized counts
+
+This was requested by PI.
+The computed values are counts with `sizeFactor` applied - allow only between sample comparisons of the same gene.
+Other option is TPM - allow between sample (of the same sample group = within cold, within control) within gene and between genes (within sample) comparisons.
+TPM may be computed directly by `edgeR`.
+
+```{r normalized}
+load("../rdata-saved/dds.f.RDa")
+
+# apply sizeFactors on counts
+cts_norm = counts(dds.f, normalized = TRUE)
+
+# make coldata with grouping variable for averaging - used as final label
+coldata = colData(dds.f)
+# make variable for averaging
+coldata$forAverage <- factor(paste0(coldata$line, "_", coldata$timepoint, "_S"))
+
+# Check if files are in concert
+all(rownames(coldata) %in% colnames(cts_norm))
+all(rownames(coldata) == colnames(cts_norm))
+
+# Steps needed to make expressionSet object
+# varMetadata - description of variables
+metadata=data.frame(labelDescription=c("pooled sample", "letter", "tissue", "line", "hour of pooling", "sample number", "day", "replication", "condition", "id", "reads [million]", "batch [sequencing]", "million of reads binned", "chronological time point", "group", "sizeFactor", "grouping variable for averaging"), row.names=colnames(coldata))
+
+# metadata
+phenoData=new("AnnotatedDataFrame", data=as.data.frame(coldata), varMetadata=metadata)
+phenoData
+
+## check
+# sampleNames(phenoData)
+# varMetadata(phenoData)
+# head(pData(phenoData))
+
+# make ExpressionSet
+dds.eset <- ExpressionSet(assayData=cts_norm, phenoData=phenoData)
+```
+
+```{r average}
+# average reps
+average = t(avereps(t(exprs(dds.eset)), ID = dds.eset$forAverage)) # output is a matrix
+
+# check
+dim(average)
+dim(dds.eset)
+
+## sort chronologically within line
+# get and order colnames
+
+cols <- colnames(average)
+prefix <- sub("_.*", "", cols)
+num <- as.numeric(sub(".*_([0-9]+).*", "\\1", cols))
+ord <- order(prefix, num)
+average_srt <- average[, ord]
+
+# save object - it will be joined with SAM. UniProt ID and description will be also added
+# save(average_srt, file = '../rdata-saved/leaf_ave_norm_count.RDa')
+```
+
+```{r anno}
+# make column with gene names
+df <- as.data.frame(average_srt) |>
+  rownames_to_column(var = "Name")
+
+# load annotation
+anno = read.table("../../../input-data/go-uniprot/NAM_descr_best", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+colnames(anno) <- c("Name", "description")
+
+# join with DE-data
+df_anno <- left_join(df, anno, by = "Name")
+
+# join with UPs
+ups = read.table("../../../input-data/go-uniprot/NAM2UP_all_forGOextraction", header=FALSE, stringsAsFactors = FALSE, sep="\t", quote = "")
+colnames(ups) <- c("Name", "UniProt")
+
+average_anno_up <- left_join(df_anno, ups, by = "Name") |>
+  relocate(UniProt, .after = Name)
+
+# save to file
+write.table(average_anno_up, file = 'SAM_ave_count_sizefactor.csv', row.names = FALSE, quote = FALSE, sep='\t')
 ```
 
 ## References

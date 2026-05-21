@@ -1,0 +1,51 @@
+---
+title: "Make AnnotationDbi Z. mays package"
+format: html
+date: "2026-03-31"
+---
+
+## Rationale
+
+This code produces `AnnotationDbi` package for use with `clusterProfiler` and other R packages.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+library(AnnotationForge)
+```
+
+```{r install packages}
+#| eval: false
+#| output: false
+#| message: false
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("AnnotationForge")
+```
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+## Create database from NCBI
+
+```{r ncbi}
+# The most straightforward way
+makeOrgPackageFromNCBI(version = "0.1",
+                       author = "Some One <so@someplace.org>",
+                       maintainer = "Some One <so@someplace.org>",
+                       outputDir = "~",
+                       tax_id = "4577",
+                       genus = "Zea",
+                       species = "mays")
+```

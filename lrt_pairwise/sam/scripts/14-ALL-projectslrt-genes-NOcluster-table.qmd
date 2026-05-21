@@ -9,7 +9,7 @@ execute:
 ---
 
 :::{.callout-warning}
-The aim of this code was to summarize genes *assigned* to cluster at >= 0.7 membership. However it has a flaw - genes present in clusters in one tissue can be unassigned to cluster in the other.
+The aim of this code was to summarize genes *not* assigned to cluster at >= 0.7 membership. However it has a flaw - genes absent in clusters in one tissue can be in cluster in the other.
 :::
 
 This code used files made in:
@@ -39,8 +39,8 @@ rm(list=ls())
 Load `DESeq2` results - tables for contrasts, saved in [02-SAM-only-loop-regr-cold.qmd](02-SAM-only-loop-regr-cold.qmd)
 
 ```{r load}
-load("../rdata-saved/sam_coldlrt.DE_cluster_table.RDa")
-load("../../leaf/rdata-saved/leaf_coldlrt.DE_cluster_table.RDa")
+load("../rdata-saved/sam_coldlrt.DE_NOcluster_table.RDa")
+load("../../leaf/rdata-saved/leaf_coldlrt.DE_NOcluster_table.RDa")
 ```
 
 Join together log2FC values for significant genes in each comparison.
@@ -83,5 +83,5 @@ fc_decl_anno_up <- left_join(fc_decl_anno, ups, by = "Name") |>
 Save to file
 
 ```{r save}
-write.table(fc_decl_anno_up, file = "../../genes_cluster_table_lrt_cold.csv", quote = FALSE, sep = "\t", row.names = FALSE)
+write.table(fc_decl_anno_up, file = "../../genes_NOcluster_table_lrt_cold.csv", quote = FALSE, sep = "\t", row.names = FALSE)
 ```
