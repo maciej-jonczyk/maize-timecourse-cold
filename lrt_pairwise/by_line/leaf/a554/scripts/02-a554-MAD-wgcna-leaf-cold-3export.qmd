@@ -1,0 +1,82 @@
+---
+title: "WGCNA for a554 leaf in cold + regrowth. Part III - data export for further analysis."
+format: html
+date: "2026-06-26"
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+Built with R version `r getRversion()`
+
+This script continues [02-a554-MAD-wgcna-leaf-cold-2network.qmd](02-a554-MAD-wgcna-leaf-cold-2network.qmd).
+
+And is based on "Tutorial for the WGCNA package for R: I. Network analysis of liver expression data in female mice 3. Relating modules to external information and identifying important genes".
+
+# Data preparation
+
+## Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+# rm(list = ls())
+library(WGCNA)
+
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE)
+# Allow multi-threading within WGCNA.
+# Caution: skip this line if you run RStudio or other third-party R environments.
+# See note above.
+enableWGCNAThreads()
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r load}
+
+rm(list = ls())
+
+# set variables
+
+tissue.name = "leaf"
+
+line.name = "a554"
+
+power = 13
+
+# read objects
+
+in_file = paste0('../rdata-saved/networkConstruction', power, tissue.name, "-", line.name, '.RDa')
+
+load(in_file)
+
+in_file2 = paste0("../rdata-saved/", tissue.name, "-", line.name, "-dataInput.RData")
+
+load(in_file2)
+```
+
+# Create objects for GO-enrichment analysis
+
+```{r files for GO}
+
+# All genes after MAD-filtering, it will be population for GO-enrichment
+mad.genes = names(datExpr)
+
+# Genes in modules
+info2 = data.frame(Probe = names(datExpr),
+                   ModuleColor = moduleColors) |> 
+        filter(moduleColors != "grey")
+
+# Create list
+genes_modules <- split(info2$Probe, info2$ModuleColor)# 
+
+out_file = paste0('../rdata-saved/modules4go', power, tissue.name, "-", line.name, '.RDa')
+
+save(genes_modules, info2, mad.genes, file = out_file)
+```
+
+:::{.callout-note}
+Other means to export only gene IDs and module color - [section 'Relate Module (cluster) Assignments to Treatment Groups'](https://bioinformaticsworkbook.org/tutorials/wgcna.html#gsc.tab=0). And for Cytoscape: 'Generate and Export Networks'.
+:::

@@ -1,0 +1,109 @@
+---
+title: "Realtine consensus modules to traits (lines) in cold"
+format: html
+date: "2026-06-23"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+## Rationale
+
+The aim is to relate consensus modules from WGCNA to experimental variants.
+This can entail: inbred line, day.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+library(WGCNA)
+
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE)
+```
+
+## Load data
+
+```{r load}
+rm(list = ls())
+
+# Imput data for analysis
+load('../rdata-saved/wgcna/Consensus-dataInput-MAD025.RData')
+
+# wgcna results
+load('../rdata-saved/wgcna/cons12merged025.RDa')
+
+# exprSize = checkSets(multiExpr)
+nSets = exprSize$nSets
+```
+
+We have loaded the variables `multiExpr` and `Traits` containing the expression and trait data, respectively. Further, expression data dimensions are stored in `nGenes` and `nSamples`. The consensus network analysis results are
+represented by the variables `consMEs`, `moduleLabels`, `moduleColors`, and `consTree`.
+
+## Relating consensus modules to experimetal variables
+
+:::{.callout-important}
+Approach for categorical variables is described in [post](https://peterlangfelder.com/2018/11/25/working-with-categorical-variables/).
+:::
+
+<!-- ```{r binarize} -->
+<!-- # Correlation is computed for each set separately so 'line' could NOT be included! -->
+<!-- ## Binarization of 'day' -->
+<!-- for (i in c(1, 2, 3)){ -->
+<!-- daybin_vsall = binarizeCategoricalVariable(Traits[[i]]$data$day, includePairwise = FALSE, includeLevelVsAll = TRUE) -->
+<!-- Traits[[i]]$data = cbind(Traits[[i]]$data, daybin_vsall) -->
+<!-- } -->
+<!-- ``` -->
+
+```{r binarize all}
+for (set in 1:nSets){
+  daybin_vsall = as.data.frame(binarizeCategoricalVariable(Traits[[set]]$data$day, includePairwise = FALSE, includeLevelVsAll = TRUE))
+  rownames(daybin_vsall) = rownames(Traits[[set]]$data)
+  Traits[[set]]$data = daybin_vsall
+}
+```
+
+```{r correlations}
+# Set up variables to contain the module-trait correlations
+moduleTraitCor = list()
+moduleTraitPvalue = list()
+# Calculate the correlations
+for (set in 1:nSets)
+{
+  moduleTraitCor[[set]] = cor(consMEs[[set]]$data, Traits[[set]]$data, use = "p")
+  moduleTraitPvalue[[set]] = corPvalueFisher(moduleTraitCor[[set]], exprSize$nSamples[set])
+}
+```
+
+We now display the module-trait relationships using a color-coded table. We print the correlations and the corresponding p-values, and color-code the entris by the p-value significance.
+
+```{r module-trait, fig.width=10, fig.height=6, dpi=300, dev='png'}
+# Convert numerical labels to colors for labeling of modules in the plot
+MEColors = labels2colors(as.numeric(substring(names(consMEs[[1]]$data), 3)))
+MEColorNames = paste("ME", MEColors, sep="")
+# Plot the module-trait relationship table for each set
+for (set in 1:nSets){
+  textMatrix = paste(signif(moduleTraitCor[[set]], 2), "\n(",
+  signif(moduleTraitPvalue[[set]], 1), ")", sep = "")
+  dim(textMatrix) = dim(moduleTraitCor[[set]])
+  # sizeGrWindow(10,7)
+  par(mar = c(6, 8.8, 3, 2.2))
+  labeledHeatmap(Matrix = moduleTraitCor[[set]],
+  xLabels = names(Traits[[set]]$data),
+  yLabels = MEColorNames,
+  ySymbols = MEColorNames,
+  colorLabels = FALSE,
+  colors = blueWhiteRed(50),
+  textMatrix = textMatrix,
+  setStdMargins = FALSE,
+  cex.text = 0.5,
+  zlim = c(-1,1),
+  main = paste("Module--trait relationships in", setLabels[set]))
+}
+```
+
+## References

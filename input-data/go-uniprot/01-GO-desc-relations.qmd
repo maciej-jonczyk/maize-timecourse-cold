@@ -90,7 +90,6 @@ cd ../../../input-data/go-uniprot/
 
 for i in tf_activ dev photosyn rhythm; do
 
-# DNA transcription-factor activity
 grep -Fwf rel3_${i}.txt NAM2GO_all_4making_pop | cut -f1 -d $'\t' | sort -u > rel3-genes-${i}
 
 done
@@ -98,3 +97,16 @@ done
 # Header for networks for selected GOs
 #echo -e "uniprot1\tensembl1\tdesc1\tcluster1\tmember1\tuniprot2\tensembl2\tdesc2\tcluster2\tmember2\tneighborhood\tneighborhood_transferred\tfusion\tcooccurence\thomology\tcoexpression\tcoexpression_transferred\texperiments\texperiments_transferred\tdatabase\tdatabase_transferred\ttextmining\ttextmining_transferred\tcombined_score" > header-net-tab
 ```
+
+```{bash cca}
+# Manually add CCA1 and two other clock TFs
+
+cd ../../../input-data/go-uniprot/
+
+rm rel3-genes-rhythm-add
+cp rel3-genes-rhythm rel3-genes-rhythm-add
+
+echo -e 'Zm00001eb172450\nZm00001eb139830\nZm00001eb362240' >> rel3-genes-rhythm-add
+
+```
+

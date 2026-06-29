@@ -1,0 +1,202 @@
+---
+title: "WGCNA for a554 leaf in cold + regrowth. Part IV - cytoscape networks for top nodes"
+format: html
+date: "2026-06-26"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+## Rationale
+The aim of this script is to filter network nodes to generate cytoscape networks of similar size with top hubs.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+# rm(list = ls())
+library(WGCNA)
+
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE)
+# Allow multi-threading within WGCNA.
+enableWGCNAThreads()
+# 
+# library(dplyr)
+# library(tidyr)
+# library(ggplot2)
+
+# load package
+library(RCy3)
+
+# check connection to Cytoscape
+cytoscapePing()
+```
+
+```{r load data}
+rm(list = ls())
+
+# set variables
+
+tissue.name = "leaf"
+
+line.name = "a554"
+
+power = 13
+
+in_file = paste0('../rdata-saved/networkConstruction', power, tissue.name, "-", line.name, '.RDa')
+
+load(in_file) # datExpr (for gene names), TOM and moduleColors
+
+in_file2 = paste0('../rdata-saved/power', power, tissue.name, "-", line.name, '.RDa')
+
+load(in_file2)
+
+in_file3 = paste0("../rdata-saved/", tissue.name, "-", line.name, "-dataInput.RData")
+
+load(in_file3)
+
+# Read in the annotation file
+annot = read.table("../../../../../input-data/go-uniprot/NAM-UP-anno", sep = "\t", header = FALSE)
+```
+
+# Create network files for top 100 hubs
+
+```{r cyto loop}
+## Method to gen all modules
+
+# set variables
+x = unique((moduleColors))
+
+modules = x[x != 'grey']
+
+thresh = 0.02
+
+probes = colnames(datExpr) # select colnames from one of the sets
+
+# 5. Określ liczbę top-hubów (podobnie jak w oryginalnym skrypcie)
+nTop = 100
+
+for (module in modules) {
+
+# 2. Wyodrębnij sondy należące do tego modułu
+inModule = (moduleColors == module)
+modProbes = probes[inModule]
+
+# 3. Wyciągnij Topological Overlap z wyliczonej macierzy CONSENSUS TOM
+# Zamiast TOM używamy consTOM wyliczonej podczas budowy sieci consensus
+modTOM = TOM[inModule, inModule]
+dimnames(modTOM) = list(modProbes, modProbes)
+
+# 4. Oblicz łączność węzłów wewnątrz modułu na podstawie consTOM
+# Suma wierszy (rowSums) w topologicznym overlapie świetnie odzwierciedla wewnątrzmodułową łączność 
+IMConn = rowSums(modTOM)
+
+# 6. Stwórz wektor logiczny "top"
+top = (rank(-IMConn) <= nTop)
+
+# 7. Wyciągnij symbole genów dla całego modułu (na podstawie adnotacji)
+modProts = annot$V2[match(modProbes, annot$V1)]
+
+# 8. Wyeksportuj odpowiednio skróconą sieć do Cytoscape
+cyt = exportNetworkToCytoscape(modTOM[top, top],
+  edgeFile = paste0("../results/wgcna/network/Consensus-CytoscapeInput-edges-", module, "-top", nTop, ".txt"),
+  nodeFile = paste0("../results/wgcna/network/Consensus-CytoscapeInput-nodes-", module, "-top", nTop, ".txt"),
+  weighted = TRUE,
+  threshold = thresh,
+  # Upewnij się, że atrybuty i nazwy też filtrujesz wektorem [top]
+  nodeNames = modProbes[top],
+  altNodeNames = modProts[top],
+  nodeAttr = moduleColors[inModule][top] 
+)
+
+}
+```
+
+# Draw networks for top 100 hubs
+
+:::{.callout-note}
+Networks were meant to be colored according to module name, however only basic colors are recognized by cytoscape.
+
+The network generation require tuning - eg. node size by degree is not a good idea or other scale is needed.
+:::
+
+```{r create network each}
+
+# set variables
+x = unique((moduleColors))
+
+modules = x[x != 'grey']
+
+for (module in modules){
+# Set input file names
+  
+input_nodes=paste0("../results/wgcna/network/Consensus-CytoscapeInput-nodes-", module, "-top", nTop, ".txt")
+
+input_edges=paste0("../results/wgcna/network/Consensus-CytoscapeInput-edges-", module, "-top", nTop, ".txt")
+
+## extract color name
+
+# ncolor = gsub("-.*", "", name)
+
+# Read node and edge files
+
+node_info = read.table(input_nodes, header = TRUE, sep = "\t")
+colnames(node_info)[3] = "module"
+
+edge_info = read.table(input_edges, header = TRUE, sep = "\t")
+
+# Create network
+
+createNetworkFromDataFrames(
+  title = module,
+  collection = "leaf, ctrl, wgcna",
+  nodes = node_info,
+  node.id.list = "nodeName",
+  source.id.list = "fromNode",
+  target.id.list = "toNode",
+  edges=edge_info
+)
+
+## change node shape
+
+setNodeShapeDefault('ELLIPSE')
+
+## run "Analyze network" to get degree values
+analyzeNetwork()
+
+### set node shape mapping
+
+setNodeSizeMapping(
+  table.column = "Degree",
+  table.column.values = c(1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100),
+  sizes = c(20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70),
+  mapping.type = "c"
+)
+
+## set edge mapping according to "weight" from WGCNA
+
+setEdgeLineWidthMapping(table.column = 'weight',
+                        widths = c(1, 10))
+
+## set module color
+### Passtrought mapping - works fine except "darkgrey"
+
+setNodeColorMapping(table.column = "module",
+                   mapping.type = "p")
+
+## add annotation table
+
+loadTableData(annot, data.key.column="V1")
+
+}
+
+out_file = paste0("../results/wgcna/network/cold-top", nTop , "power", power, tissue.name, "-", line.name)
+
+saveSession(out_file) #.cys
+```

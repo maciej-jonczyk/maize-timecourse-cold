@@ -1,0 +1,388 @@
+---
+title: "WGCNA for leaf in cold + regrowth, consensus test for four lines. Part I - data input. Filtering on MAD".
+format: html
+date: "2026-06-07"
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+Built with R version `r getRversion()`
+
+# Rationale
+
+6 timepoints are available per line per variant (cold / control). There are 3 biological replications so in all we have 18 samples per line per variant. "time of day" (three letters) * "day" (1, 2) * "biological replication" (1 to 3) $3 * 2 * 3 = 18$ samples. Times 2 temperatures gives 36 samples per line.
+The sample size of joined temperature variants is sufficient according to FAQ ('at least 30').
+
+The aim is to perform consensus WGCNA - separate per line and jointly.
+
+Two filtering steps were performed:
+1. At least 10 counts in at least 90% samples.
+2. MAD above 1st quartile.
+
+# Data preparation
+
+## Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+library(GenomicRanges)
+library(WGCNA)
+library(dplyr)
+library(DESeq2)
+```
+
+
+```{r instal-packages}
+#| eval: false
+#| output: false
+#| message: false
+# Clean working directory, if needed
+rm(list=ls())
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("impute")
+BiocManager::install("preprocessCore")
+BiocManager::install("GO.db")
+BiocManager::install("AnnotationDbi")
+
+install.packages("WGCNA")
+```
+
+:::{.callout-important}
+Peter Langfelder doesn't advise filtering on variance (In `DESEq2`?) - [bioconductor forum](https://support.bioconductor.org/p/127855/#127864).
+:::
+
+Subsetting of tissues before or after vst? I'll do it after, as count filtering must be done on raw counts.
+
+## Read-in data
+
+```{r read data, cache=TRUE}
+load("../../../input-data/rdata/counts_and_metadata.RDa")
+
+# previously prepared range data
+load("../../../input-data/rdata/ranges.RDa")
+
+# transform Factors to chr/int where appropriate
+coldata2 = coldata |> mutate(across(letter : line, as.character), 
+                             condition = as.character(condition), 
+                             across(time : rep, as.integer))
+
+# Overwrite original object to keep further code unchanged
+coldata = coldata2
+
+# Check if files are in concert
+all(rownames(coldata) %in% colnames(cts))
+all(rownames(coldata) == colnames(cts))
+```
+
+## Subset leaf data
+
+Subsetting is done at the level of raw data (counts and coldata).
+```{r subset leaf data}
+# subset coldata
+coldata.leaf=subset(coldata, tissue=="leaf")
+
+# check
+dim(coldata.leaf)
+
+# vector of sample names to keep - needed to select columns from count file
+keep.leaf=rownames(coldata.leaf)
+
+# check - only samples named "la5..." should remain
+keep.leaf
+length(keep.leaf)
+
+# subsetting counts
+cts.leaf=subset(cts, select=keep.leaf)
+
+# check
+dim(cts.leaf)
+colnames(cts.leaf)
+
+# Check if counts and coldata are in concert
+all(rownames(coldata.leaf) %in% colnames(cts.leaf))
+all(rownames(coldata.leaf) == colnames(cts.leaf))
+
+keep = c("coldata.leaf", "cts.leaf", "gzakresy")
+
+rm(list = setdiff(ls(), keep))
+```
+
+## Data preparation
+
+DESeq data set must be created to perform VST.
+
+```{r factors}
+#| output: false
+#| message: false
+
+## Prepare grouping variable for use in model in dds
+
+# add variable describing chronology of samples
+coldata.leaf$timepoint = coldata.leaf$time + (coldata.leaf$day - 1) * 3
+
+# Adding grouping variable to easily analyse all comparisons needed
+coldata.leaf$group <- factor(paste0(coldata.leaf$line, "_", coldata.leaf$timepoint))
+
+# check
+str(coldata.leaf)
+```
+
+## Create DEseq Data Set
+
+```{r dds, cache=TRUE}
+#| output: false
+#| message: false
+
+# create dataset, design included only for command completeness, different will be used in DE analysis
+dds.leaf = DESeqDataSetFromMatrix(countData = cts.leaf, colData = coldata.leaf, rowRanges = gzakresy, design = ~ group)
+```
+
+## Pre-filtering
+
+:::{.callout-important}
+According to FAQ provided with WGCNA tutorial:
+> removing all features that have a count of less than say 10 in more than 90% of the samples.
+
+Filtering of the whole dataset - not subset for each line.
+:::
+
+```{r filter, cache=TRUE}
+# keeping genes having at least 10 counts in at least 90% samples
+## what is 90% for all leaf samples?
+perc90 = round(nrow(coldata.leaf) * 0.9, 0)
+
+perc90
+
+keep <- rowSums(counts(dds.leaf) >= 10) >= perc90
+dds.leaf.f <- dds.leaf[keep,]
+
+# check
+dim(dds.leaf.f)
+
+# what percent of genes remained?
+100*(dim(dds.leaf.f)[1]/dim(dds.leaf)[1])
+
+# [1] 130
+# [1] 17990   144
+# [1] 40.60673
+```
+
+## Normalization
+
+According to [post](https://www.biostars.org/p/459013/#459016) `varianceStabilizingTransformation` not `vst` is used. Design is provided here only because it is required in `dds` object. It makes no sense using `blind=FALSE` here.
+
+```{r normalize, cache=TRUE}
+vsd.leaf = varianceStabilizingTransformation(dds.leaf.f, blind=TRUE)
+
+rm(list = setdiff(ls(), c('vsd.leaf', 'coldata.leaf')))
+```
+
+## Extract normalized counts
+
+```{r extract normalized counts}
+vsd.counts = assay(vsd.leaf)
+
+coldata = colData(vsd.leaf)
+
+# check
+dim(vsd.counts)
+dim(coldata)
+```
+
+## Filtering on Median Absolute Deviation
+
+The minimal count filtering leaves high number of genes - 17990 (remarkably similar to control analysis - 17756).
+The same filtering is applied as in control analysis.
+
+Three filtering thresholds were tested, the plots are not clearer, nevertheless only genes with MAD > 1st quartile will be kept.
+
+```{r MAD compute}
+mad_per_gene <- apply(vsd.counts, 1, mad)
+```
+
+```{r MAD plots}
+hist(mad_per_gene, breaks = 100)
+
+# mark potential cutoffs
+q25 <- quantile(mad_per_gene, 0.25)
+q3 <- quantile(mad_per_gene, 0.3)
+q5 <- quantile(mad_per_gene, 0.5)
+abline(v=q25, col="red", lwd=2, lty=2)
+abline(v=q3, col="blue", lwd=2, lty=2)
+abline(v=q5, col="green", lwd=2, lty=2)
+```
+
+
+Historgam is also similar as in control so likewise q25 threshold will be used for filtering.
+
+```{r MAD filter}
+# remove genes below selected percentile
+cutoff = q25
+
+# what is the cutoff value
+cutoff
+
+keep <- mad_per_gene > cutoff
+# how many genes remained
+sum(keep)
+
+# make copy of keep to avoid name collisions when loading to other analyses
+
+keep.consensus = keep
+
+save(keep.consensus, file = '../rdata-saved/wgcna/genes2keep.RDa')
+
+vst_filt_mad <- vsd.counts[keep, ]
+
+# copy object to old name to keep the rest of script unchanged
+vsd.counts = vst_filt_mad
+
+# save for heatmap
+save(vsd.counts, coldata.leaf, file = '../rdata-saved/wgcna/vsd-mad.RDa')
+```
+
+:::{.callout-important}
+Now `vsd.counts` is MAD-filtered.
+:::
+
+## Split data by line
+
+The dataset must be splitted by variable compared in consensus analysis - here 'line'
+
+```{r split}
+
+for (i in unique(coldata$line)) {
+  # subset coldata
+  
+  counts_name = paste0('vsd.counts4wgcna.', i)
+  
+  x = subset(coldata, line == i)
+  keep=rownames(x)
+  res=subset(vsd.counts, select=keep)
+  print(dim(res))
+  print(colnames(res))
+  
+  # transform to data frame and transpose
+  res2 = as.data.frame(t(res))
+  print(dim(res2))
+  print(rownames(res2))
+  
+  assign(counts_name, res2, envir = .GlobalEnv)
+}
+
+```
+
+
+# Consensus analysis
+
+## Data input, cleaning & preprocessing
+
+
+```{r}
+#| output: false
+
+options(stringsAsFactors = FALSE) # Important option, do not omit!
+```
+
+## Reformat data
+
+List is created with count tables for each line.
+
+```{r format data}
+# We have 4 sets
+nSets = 4
+
+# For easier labeling of plots, create a vector holding descriptive names of the sets.
+setLabels = c('a554', 's018', 's311', 's84')
+
+# Form multi-set expression data
+multiExpr = vector(mode = "list", length = nSets)
+
+multiExpr[[1]] = list(data = vsd.counts4wgcna.a554)
+multiExpr[[2]] = list(data = vsd.counts4wgcna.s018)
+multiExpr[[3]] = list(data = vsd.counts4wgcna.s311)
+multiExpr[[4]] = list(data = vsd.counts4wgcna.s84)
+
+# Check that the data has the correct format for many functions operating on multiple sets:
+exprSize = checkSets(multiExpr)
+exprSize
+```
+
+## Checking data for excessive missing values and identification of outlier samples
+
+```{r check missing}
+# Check the data for missing values
+gsg = goodSamplesGenesMS(multiExpr, verbose = 3)
+gsg$allOK
+```
+
+We now cluster the samples on their Euclidean distance, separately in each set.
+
+```{r cluster}
+sampleTrees = list()
+for (set in 1:nSets)
+{
+sampleTrees[[set]] = hclust(dist(multiExpr[[set]]$data), method = "average")
+}
+```
+
+The easiest way to see the multiple dendrograms at the same time is to plot each into a pdf file that can be viewed
+using standard pdf viewers.
+
+```{r dendro}
+# saving plot to file for easier visualization
+pdf(file = "SampleClustering.pdf", width = 24, height = 12)
+par(mfrow=c(2,2))
+#par(mar = c(0, 4, 2, 0))
+for (set in 1:nSets)
+plot(sampleTrees[[set]], main = paste("Sample clustering on all genes in", setLabels[set]),
+xlab="", sub="", cex = 0.7)
+dev.off()
+```
+
+There are no outliers but samples have tendency to cluster by time of day (like in control).
+It is most visible in s311.
+Day (1, 2 = cold, 3, 4 = regrowth) also show some grouping.
+
+Neither of effects is surprising.
+
+# Loading category data
+
+It is essentially coldata information. May be used in plots.
+
+```{r cats}
+# rename
+allTraits = coldata.leaf
+
+nSets = 4
+
+Traits = vector(mode="list", length = nSets)
+
+for (set in 1:nSets)
+{
+setSamples = rownames(multiExpr[[set]]$data)
+traitRows = match(setSamples, rownames(allTraits))
+Traits[[set]] = list(data = allTraits[traitRows, (names(allTraits) %in% c('line', 'time', 'day', 'rep', 'condition'))])
+}
+collectGarbage()
+
+# Define data set dimensions
+exprSize = checkSets(multiExpr)
+
+nGenes = exprSize$nGenes
+nSamples = exprSize$nSample
+```
+
+```{r save}
+# dir for saved objects
+dir.create("../rdata-saved/wgcna")
+save(multiExpr, Traits, nGenes, nSamples, setLabels, exprSize, 
+     file = "../rdata-saved/wgcna/Consensus-dataInput-MAD025.RData")
+```
+
+:::{.callout-note}
+Proceed to [02-wgcna-leaf-cold-line4-2network.qmd](02-wgcna-leaf-cold-line4-2network.qmd).
+:::

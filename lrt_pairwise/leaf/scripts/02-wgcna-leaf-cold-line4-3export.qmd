@@ -1,0 +1,330 @@
+---
+title: "WGCNA for leaf in cold + regrowth, consensus test for four lines. Part III - data export for further analysis."
+format: html
+date: "2026-06-08"
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+Built with R version `r getRversion()`
+
+This script continues [02-wgcna-leaf-cold-line4-2network.qmd](02-wgcna-leaf-cold-line4-2network.qmd).
+
+And is based on "Tutorial for the WGCNA package for R II. Consensus network analysis of liver expression data, female and
+male mice 4. Relating consensus modules to external microarray sample information and exporting network analysis results".
+
+# Data preparation
+
+## Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+# rm(list = ls())
+library(WGCNA)
+
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE)
+# Allow multi-threading within WGCNA.
+# Caution: skip this line if you run RStudio or other third-party R environments.
+# See note above.
+enableWGCNAThreads()
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r load}
+rm(list = ls())
+
+load('../rdata-saved/wgcna/Consensus-NetworkConstruction-cold-man12mrg025.RData')
+
+load("../rdata-saved/wgcna/Consensus-dataInput-MAD025.RData")
+```
+
+## Compute summary table
+
+We (re-)calculate the module eigengenes (first principal component of a given
+module - representative of the gene expression profiles in a module.) 
+in the ”alphabetic” order and calculate the gene significances (correlation with trait) and
+module memberships (correlation of gene expression profile and module eigengene) in each data set.
+
+```{r recalculate ME}
+# Get the number of sets in the multiExpr structure.
+nSets = checkSets(multiExpr)$nSets
+
+consMEs.unord = multiSetMEs(multiExpr, 
+                            universalColors = moduleLabels, 
+                            excludeGrey = TRUE)
+#GS = list()
+kME = list()
+for (set in 1:nSets)
+{
+  #GS[[set]] = corAndPvalue(multiExpr[[set]]$data, Traits[[set]]$data)
+  kME[[set]] = corAndPvalue(multiExpr[[set]]$data, consMEs.unord[[set]]$data)
+}
+```
+
+We perform a very simple ”meta-analysis” by combining the Z scores of correlations from each set to form a
+meta-Z score and the corresponding p-value.
+
+```{r meta-z}
+# GS.metaZ = (GS[[1]]$Z + GS[[2]]$Z + GS[[3]]$Z + GS[[4]]$Z)/sqrt(4)
+kME.metaZ = (kME[[1]]$Z + kME[[2]]$Z + kME[[3]]$Z + kME[[4]]$Z)/sqrt(4)
+# GS.metaP = 2*pnorm(abs(GS.metaZ), lower.tail = FALSE)
+kME.metaP = 2*pnorm(abs(kME.metaZ), lower.tail = FALSE)
+```
+
+Next we form matrices holding the GS and kME. We use a simple re-shaping trick to put the values and the
+associated p-values and meta-analysis results next to one another.
+
+```{r kME}
+probes = names(multiExpr[[1]]$data)
+
+# GSmat = rbind(GS[[1]]$cor, GS[[2]]$cor, GS[[1]]$p, GS[[2]]$p, GS.metaZ, GS.metaP)
+# nTraits = checkSets(Traits)$nGenes
+# traitNames = colnames(Traits[[1]]$data)
+# dim(GSmat) = c(nGenes, 6*nTraits)
+# rownames(GSmat) = probes
+# colnames(GSmat) = spaste(
+# c("GS.set1.", "GS.set2.", "p.GS.set1.", "p.GS.set2.", "Z.GS.meta.", "p.GS.meta"),
+# rep(traitNames, rep(6, nTraits)))
+
+# Same code for kME:
+## bind rows (?)
+kMEmat = rbind(kME[[1]]$cor, kME[[2]]$cor, kME[[3]]$cor, kME[[4]]$cor, 
+               kME[[1]]$p, kME[[2]]$p, kME[[3]]$p, kME[[4]]$p , 
+               kME.metaZ, kME.metaP)
+
+## module names
+MEnames = colnames(consMEs.unord[[1]]$data)
+## number of modules
+nMEs = checkSets(consMEs.unord)$nGenes
+## reshape
+dim(kMEmat) = c(nGenes, 10*nMEs)
+## change row/col names
+rownames(kMEmat) = probes
+colnames(kMEmat) = spaste(
+c("kME.set1.", "kME.set2.", "kME.set3.", "kME.set4.", 
+  "p.kME.set1.", "p.kME.set2.", "p.kME.set3.", "p.kME.set4.", 
+  "Z.kME.meta.", "p.kME.meta"),
+  rep(MEnames, rep(10, nMEs)))
+```
+
+## Save data
+
+```{r export}
+info = data.frame(Probe = probes,
+ModuleLabel = moduleLabels,
+ModuleColor = labels2colors(moduleLabels),
+#GSmat,
+kMEmat)
+# save whole table
+# save(info, file = '../rdata-saved/wgcna/genes-modules16.RDa')
+write.table(info, file = "consensusAnalysis-cold-leaf12mrg025.txt", sep = '\t', row.names = FALSE, quote = FALSE)
+```
+
+
+```{r df to list}
+# Extract only gene ID and module assignment
+# and exclude module 0 - unassigned genes
+info2 = subset(info, ModuleLabel != 0, select = c(Probe, ModuleColor)) # alternatively ModuleLabel column can be selected
+
+# Create list
+genes_modules <- split(info2$Probe, info2$ModuleColor) # alternatively ModuleLabel column can be selected
+
+# All genes after MAD-filtering, it will be population for GO-enrichment
+mad.genes = as.vector(info[, 'Probe'])
+
+save(genes_modules, info, mad.genes, file = '../rdata-saved/wgcna/modules-cold4go12mrg025.RDa')
+```
+
+:::{.callout-note}
+Other means to export only gene IDs and module color - [section 'Relate Module (cluster) Assignments to Treatment Groups'](https://bioinformaticsworkbook.org/tutorials/wgcna.html#gsc.tab=0). And for Cytoscape: 'Generate and Export Networks'.
+:::
+
+
+:::(.callout-note)
+Below section is to be run *after* GO-enrichment analysis [02-wgcna-leaf-cold-line4-4go.qmd](02-wgcna-leaf-cold-line4-4go.qmd).
+:::
+
+## Save data (megred consensus modules) for cytoscape
+
+Cytoscape [@shannonCytoscapeSoftwareEnvironment2003] allows the user to input an edge file and a node file, allowing the user to specify for example the link weights and the node colors.
+
+```{r load2}
+rm(list = ls())
+load("../rdata-saved/wgcna/cons12merged025.RDa") # multiExpr (for gene names)
+load("../rdata-saved/wgcna/after_merge025.RDa") # consensus TOM and merged ModuleColors
+
+# Read in the annotation file
+annot = read.table("../../../input-data/go-uniprot/NAM-UP-anno", sep = "\t", header = FALSE)
+```
+
+### Joint dataset for selected modules
+
+```{r cyto multi}
+## Method to gen all modules
+# x = unique((mergedColors))
+# 
+# modules = x[x != 'grey']
+
+# For convenience data for three sets of modules are saved - one for each main branch in merged module dendrogram
+
+# modules = c("darkgrey", "plum1", "ivory", "paleturquoise", "brown", "turquoise")
+
+# modules = c("skyblue", "violet", "cyan", "yellow")
+
+# modules = c("darkgreen", "darkred", "royalblue", "greenyellow")
+
+# Thresholds choosen to make manageable networks
+# darkgrey, 0.1
+# plum1, 0.1
+# ivory, 0.1
+# paleturquoise, 0.1
+# brown, 0.2
+# turquoise, 0.35
+# skyblue, 0.1
+# violet, 0.1
+# cyan, 0.2
+# yellow, 0.3
+# darkgreen, 0.1
+# darkred, 0.1
+# royalblue, 0.1
+
+x = unique((mergedColors))
+
+modules = x[x != 'grey']
+
+# Select module probes
+probes = colnames(multiExpr[[1]]$data) # select colnames from one of the sets
+inModule = is.finite(match(moduleColors, modules))
+modProbes = probes[inModule]
+modProts = annot$V2[match(modProbes, annot$V1)]
+# Select the corresponding Topological Overlap
+modTOM = consensusTOM[inModule, inModule]
+dimnames(modTOM) = list(modProbes, modProbes)
+# Export the network into edge and node list files Cytoscape can read
+cyt = exportNetworkToCytoscape(modTOM,
+  # edgeFile = paste("../results/wgcna/network/CytoscapeInput-edges-", paste(modules, collapse="-"), ".txt", sep=""),
+  # nodeFile = paste("../results/wgcna/network/CytoscapeInput-nodes-", paste(modules, collapse="-"), ".txt", sep=""),
+  edgeFile = "../results/wgcna/network/CytoscapeInput-edges-All.txt",
+  nodeFile = "../results/wgcna/network/CytoscapeInput-nodes-All.txt",
+  weighted = TRUE,
+  threshold = 0.02,
+  nodeNames = modProbes,
+  altNodeNames = modProts,
+  nodeAttr = moduleColors[inModule])
+
+# separately add NAM-UP-anno as Node table
+```
+
+
+### Dataset by module
+
+```{r cyto one}
+## Method to gen all modules
+x = unique((mergedColors))
+
+modules = x[x != 'grey']
+
+# thresh = 0.1
+thresh = 0.02
+
+for (module in modules) {
+
+# Select module probes
+probes = colnames(multiExpr[[1]]$data) # select colnames from one of the sets
+inModule = is.finite(match(moduleColors, module))
+modProbes = probes[inModule]
+modProts = annot$V2[match(modProbes, annot$V1)]
+# Select the corresponding Topological Overlap
+modTOM = consensusTOM[inModule, inModule]
+dimnames(modTOM) = list(modProbes, modProbes)
+# Export the network into edge and node list files Cytoscape can read
+cyt = exportNetworkToCytoscape(modTOM,
+  edgeFile = paste("../results/wgcna/network/CytoscapeInput-edges-", module, "-", gsub("\\.", "", thresh), ".txt", sep=""),
+  nodeFile = paste("../results/wgcna/network/CytoscapeInput-nodes-", module, "-", gsub("\\.", "", thresh), ".txt", sep=""),
+  weighted = TRUE,
+  threshold = thresh,
+  nodeNames = modProbes,
+  altNodeNames = modProts,
+  nodeAttr = moduleColors[inModule])
+
+}
+# separately add NAM-UP-anno as Node table
+```
+
+:::{.callout-note}
+A note on "weight" from Peter Langfelder 
+> The weight generated by exportNetworkToCytoscape is exactly the matrix you give it as input.
+
+[source](https://support.bioconductor.org/p/95965/#104696)
+
+See also [post](https://www.biostars.org/p/286774/)
+
+And on threshold
+> My operational answer is to select a threshold that keeps the file size manageable, then use filtering in Cytoscape to interactively choose a threshold that results in an informative plot. This assumes that Cytoscape is only used for visualization; if you're going to use Cytoscape for further analysis, you should probably set the threshold to zero.
+
+[source](https://support.bioconductor.org/p/95965/#104724)
+:::
+
+:::{.callout-note}
+Network import to Cytoscape has to be done in two steps, first *edge* file should be imported as network. To this *node* file can be added as *node attributes* table - continued in [02-wgcna-leaf-ctrl-line4-4cytoscape.qmd](02-wgcna-leaf-ctrl-line4-4cytoscape.qmd)
+:::
+
+## Reshape `info` table for module comparison between lines
+
+The aim of this section is to extract genes comprising "darkturquoise" module in individual lines.
+
+```{r module number}
+# Identify module number - color assignement
+info |> select(ModuleColor, ModuleLabel) |> unique() |> filter(ModuleColor == 'darkturquoise')
+
+# module number 23 is needed
+```
+
+```{r check p-vals}
+# Check significance of modules - p-value from correlation with module eigengene
+
+x <- info |> 
+  filter(if_any(starts_with("p."), ~ . < 0.05))
+
+
+# Only 3 rows don't have p-value below threshold - leave table as is. The p-vals are not fdr-adjusted.
+```
+
+```{r}
+# leave only kMEs from module 23, correlation with it, and module assignment
+df = select(info, Probe:ModuleColor, matches("^kME.*23$")) |> filter(ModuleColor == 'darkturquoise')
+
+# There are 124 genes
+```
+
+```{r check p-vals}
+# Check significance of modules - p-value from correlation with module eigengene
+
+x <- info |> 
+  filter(if_any(matches("^kME.*23$"), ~ . < 0.05))
+#wartość bezwzględna korelacji!
+
+# Only 3 rows don't have p-value below threshold - leave table as is. The p-vals are not fdr-adjusted.
+```
+
+
+```{r}
+
+#x = pivot_longer(df, cols = starts_with('kME'), names_sep = '\\.', names_to = c('v1', 'set', 'module'))
+
+# szybki sposób na scattery parami
+library(GGally)
+library(ggplot2)
+
+df_num = select(df, starts_with('kME'))
+
+# podstawowy wykres par rozrzutu
+ggpairs(df_num)
+
+```
+

@@ -1,0 +1,137 @@
+---
+title: "Create Cytoscape network for selected modules, cold + regrowth."
+format: html
+date: "2026-06-09"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+## Rationale
+The aim of this script is automatization of network creation in Cytoscape. Data saved in [02-wgcna-leaf-cold-line4-3export.qmd](02-wgcna-leaf-cold-line4-3export.qmd).
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load package
+library(RCy3)
+
+# check connection to Cytoscape
+cytoscapePing()
+
+# Clean working directory
+rm(list=ls())
+
+library(paletteer)
+library(dplyr)
+library(readr)
+```
+
+The following code extracted the core names
+
+```{bash}
+# ls -l ../results/wgcna/network/ | grep -o 'Cytoscape.*' | tr '.' '-' | cut -f3,4 -d'-' | sort -u | sed 's/^/\"/;s/$/",/' > xmodulenames
+ls -l ../results/wgcna/network/ | grep -o 'Cytoscape.*' | tr '.' '-' | cut -f3 -d'-' | sort -u > xmodulenames
+```
+
+```{r}
+
+names <- read_lines("xmodulenames")
+# Vector of name cores (module_color-filter_weight)
+
+# names = c("brown-02",
+# "cyan-02",
+# "darkgreen-01",
+# "darkgrey-01",
+# "darkred-01",
+# "greenyellow-015",
+# "ivory-01",
+# "paleturquoise-01",
+# "plum1-01",
+# "royalblue-01",
+# "skyblue-01",
+# "turquoise-035",
+# "violet-01",
+# "yellow-03")
+
+for (name in names){
+# Set input file names
+  
+input_nodes=paste0("../results/wgcna/network/CytoscapeInput-nodes-", name, ".txt")
+
+input_edges=paste0("../results/wgcna/network/CytoscapeInput-edges-", name, ".txt")
+
+## extract color name
+
+# ncolor = gsub("-.*", "", name)
+
+# Read node and edge files
+
+node_info = read.table(input_nodes, header = TRUE, sep = "\t")
+colnames(node_info)[3] = "module"
+
+edge_info = read.table(input_edges, header = TRUE, sep = "\t")
+
+# Create network
+
+createNetworkFromDataFrames(
+  title = name,
+  collection = "leaf, ctrl, wgcna",
+  nodes = node_info,
+  node.id.list = "nodeName",
+  source.id.list = "fromNode",
+  target.id.list = "toNode",
+  edges=edge_info
+)
+
+## change node shape
+
+setNodeShapeDefault('ELLIPSE')
+
+## run "Analyze network" to get degree values
+analyzeNetwork()
+
+### set node shape mapping
+
+setNodeSizeMapping(
+  table.column = "Degree",
+  c(1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100),
+  c(20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70),
+  mapping.type = "c"
+)
+
+## set edge mapping according to "weight" from WGCNA
+
+setEdgeLineWidthMapping(table.column = 'weight',
+                        widths = c(1, 10))
+
+## set module color
+### Passtrought mapping - works fine except "darkgrey"
+
+setNodeColorMapping(table.column = "module",
+                   mapping.type = "p")
+
+## add annotation table
+
+anno_file <- read.table("../../../input-data/go-uniprot/NAM-UP-anno", sep = "\t", header = FALSE, stringsAsFactors = FALSE)
+
+loadTableData(anno_file, data.key.column="V1")
+
+}
+```
+
+```{r save}
+saveSession('../results/wgcna/network/ctrl13mrg025') #.cys
+```
+
+
+:::{.callout-note}
+The one problem is that there are multiple superfluous columns with identifiers. Check `deleteTableColumn` command!
+:::
+
+## References

@@ -1,0 +1,85 @@
+---
+title: "Comparing eigengene networks between lines, cold + regrowth."
+format: html
+date: "2026-06-09"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+## Rationale
+
+The aim of this script is to compare the consensus eigengene networks between data sets (such comparison
+is often called differential analysis). Consensus eigengene networks capture the relationships among consensus
+modules; the relationships are quantified by eigengene correlations.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+library(WGCNA)
+
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE)
+# Enabling multithreading
+enableWGCNAThreads() # Seems to work in RStudio
+```
+
+## Load data
+
+```{r load}
+rm(list = ls())
+
+# Basic settings: we work with two data sets
+nSets = 4
+# For easier labeling of plots, create a vector holding descriptive names of the two sets.
+setLabels = c('a554', 's018', 's311', 's84')
+
+# Input data for analysis
+load('../rdata-saved/wgcna/Consensus-dataInput-MAD025.RData')
+
+# wgcna results
+load('../rdata-saved/wgcna/Consensus-NetworkConstruction-cold-man12mrg025.RData')
+```
+
+We have loaded the variables `multiExpr` and `Traits` containing the expression and trait data, respectively. Further, expression data dimensions are stored in `nGenes` and `nSamples`. The consensus network analysis results are represented by the variables `consMEs`, `moduleLabels`, `moduleColors`, and `consTree`.
+
+## Comparing eigengene networks
+
+In this section we compare the consensus eigengene networks between data sets for lines (such comparison
+is often called differential analysis). Consensus eigengene networks capture the relationships among consensus
+modules; the relationships are quantified by eigengene correlations:
+
+```{r weight as eigengene}
+#| output: false
+#| message: false
+# Create a variable weight that will hold just the body weight of mice in all sets
+time = vector(mode = "list", length = nSets)
+for (set in 1:nSets)
+{
+time[[set]] = list(data = as.data.frame(Traits[[set]]$data$time))
+names(time[[set]]$data) = "time"
+}
+# Recalculate consMEs to give them color names
+consMEsC = multiSetMEs(multiExpr, universalColors = moduleColors)
+# We add the time trait to the eigengenes and order them by consensus hierarchical clustering:
+# MET = consensusOrderMEs(addTraitToMEs(consMEsC, time))
+MET = consensusOrderMEs(consMEsC)
+```
+
+We now call the function `plotEigengeneNetworks` that performs the differential analysis:
+
+```{r differential analysis, fig.width=8, fig.height=10, dpi=300, dev='png'}
+pdf(file = "preservation_analysis12mrg025.pdf", width = 24, height = 26)
+par(cex = 0.9)
+plotEigengeneNetworks(MET, setLabels, marDendro = c(0,2,2,1), marHeatmap = c(4,3,2,1),
+zlimPreservation = c(0.5, 1), xLabelsAngle = 45, colorLabels = FALSE, cex.lab = .8)
+dev.off()
+
+```
+
+## References

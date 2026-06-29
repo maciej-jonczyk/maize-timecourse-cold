@@ -25,12 +25,14 @@ input-data/**
 **/*_files
 **/*.html
 **/*.pdf
+**/*.png
 **/*.eps
 **/*.zip
 **/.Rproj.user
 **/.RData
 **/.Rhistory
 **/.RDataTmp
+**/*.Rout
 rozne-pliki/
 
 # rubbish
@@ -42,4 +44,5 @@ rozne-pliki/
 **/*add0*
 **/*.ods
 **/*.csv
+**/*.txt
 **/x*

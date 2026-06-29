@@ -1,0 +1,71 @@
+---
+title: "WGCNA for leaf in cold + regrowth, choosing weight threshold for all modules."
+format: html
+date: "2026-06-08"
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+Built with R version `r getRversion()`
+
+This script continues [02-wgcna-leaf-cold-line4-3export.qmd](02-wgcna-leaf-cold-line4-3export.qmd).
+
+The "weight" parameter of network edges vary by module - the aim is to choose one optimal threshold value.
+
+# Data preparation
+
+## Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+# rm(list = ls())
+library(WGCNA)
+
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE)
+# Allow multi-threading within WGCNA.
+# Caution: skip this line if you run RStudio or other third-party R environments.
+# See note above.
+enableWGCNAThreads()
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r load}
+rm(list = ls())
+
+edges = read.table("../results/wgcna/network/CytoscapeInput-edges-All.txt", sep = '\t', header = TRUE)
+nodes = read.table("../results/wgcna/network/CytoscapeInput-nodes-All.txt", sep = '\t', header = TRUE)
+```
+
+## Construct table for analysis
+
+```{r table}
+mod_weight = left_join(edges, nodes, by = join_by(fromNode == nodeName), relationship = "many-to-one") |> 
+  select(!(direction:altName)) |> 
+    mutate(module = nodeAttr.nodesPresent..., .keep = "unused")
+
+mod_weight01 = filter(mod_weight, weight >= 0.1)
+```
+
+
+```{r hist}
+ggplot(mod_weight,
+       aes(x = weight, fill = factor(module))) + # "color" zamiast "fill", daje różne obramowania, nie wypełnienia
+  geom_histogram(bins = 30, show.legend = FALSE) +
+  facet_wrap(~ module, ncol = 4, nrow = 7)
+
+ggsave("hist_mod_weight.pdf", plot = last_plot(), device = cairo_pdf, dpi = 600, height = 20, width = 12, units = 'cm')
+```
+
+```{r hist}
+ggplot(mod_weight01,
+       aes(x = weight, fill = factor(module))) + # "color" zamiast "fill", daje różne obramowania, nie wypełnienia
+  geom_histogram(bins = 30, show.legend = FALSE) +
+  facet_wrap(~ module, ncol = 4, nrow = 7)
+
+ggsave("hist_mod_weight01.pdf", plot = last_plot(), device = cairo_pdf, dpi = 600, height = 20, width = 12, units = 'cm')
+```

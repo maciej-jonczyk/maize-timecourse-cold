@@ -1,0 +1,70 @@
+---
+title: "Table comparing gene cluster assignment in cold and control (leaf)"
+format: html
+date: "2026-03-30"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+The aim of this code is to make a table with gene IDs and cluster assignment in cold and control.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+library(DESeq2)
+library(dplyr)
+library(tidyr)
+library(tibble)
+```
+
+```{r}
+#| output: false
+
+# Clean working directory
+rm(list=ls())
+```
+
+## Make tables
+
+### Cold
+
+```{r load cold}
+load("../rdata-saved/mfuzz_cl15_m1.25_leaf.RDa")
+```
+
+```{r process cold}
+df_cold <- enframe(genes_in_clusters, name = "klaster_chlod", value = "ID") |>
+  mutate(klaster_chlod = sub("^Klaster\\s*", "", klaster_chlod)) |>
+    unnest(cols = ID)
+```
+
+### Control
+
+```{r load ctrl}
+load("../../../../project1-ctrl-stat/lrt_pairwise/leaf/rdata-saved/mfuzz_cl14_m1.25_leaf.RDa")
+```
+
+```{r process ctrl}
+df_ctrl <- enframe(genes_in_clusters, name = "klaster_kontrola", value = "ID") |>
+  mutate(klaster_kontrola = sub("^Klaster\\s*", "", klaster_kontrola)) |>
+    unnest(cols = ID)
+```
+
+### Join
+
+```{r join}
+df_coldctrl = full_join(df_cold, df_ctrl, by = "ID") |>
+  select(ID, everything())
+```
+
+```{r save}
+write.csv(df_coldctrl, file = "klastry_warunki.csv", row.names = FALSE, quote = FALSE)
+```
+

@@ -1,0 +1,403 @@
+---
+title: "WGCNA for a554 leaf in cold + regrowth. Part VI - line plots of expresion for modules."
+format: html
+date: "2026-06-29"
+bibliography: ../../../refs-stat-anal.bib
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+## Rationale
+
+This script is based on [Examine Expression Profiles](https://bioinformaticsworkbook.org/tutorials/wgcna.html#gsc.tab=0).
+
+The aim is to visualize genes from WGCNA modules.
+
+Built with R version `r getRversion()`
+
+## R Preliminaries
+
+Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+#library(pheatmap)
+library(DESeq2)
+#library(RColorBrewer)
+#library(paletteer)
+library(limma)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(Mfuzz)
+```
+
+## Load data
+
+```{r load}
+rm(list = ls())
+
+# set variables
+
+tissue.name = "leaf"
+
+line.name = "a554"
+
+power = 13
+
+# counts after vsd - the set computed for consensus analysis
+load('../../../../leaf/rdata-saved/wgcna/vsd-mad.RDa')
+
+in_file = paste0('../rdata-saved/modules4go', power, tissue.name, "-", line.name, '.RDa')
+
+# modules
+load(in_file)
+```
+
+
+## Plots for individual replicates
+
+### Prepare data
+
+```{r sort}
+coldata_srt = coldata.leaf[order(coldata.leaf$line, coldata.leaf$timepoint),]
+
+vsd.counts_srt <- vsd.counts[, rownames(coldata_srt)]
+```
+
+```{r check}
+# Check if files are in concert
+all(rownames(coldata_srt) %in% colnames(vsd.counts_srt))
+all(rownames(coldata_srt) == colnames(vsd.counts_srt))
+```
+
+```{r counts modules}
+# tables with genes in each module, reverse sorted
+counts_genes <- lapply(names(genes_modules), function(name) {
+  ids_present <- intersect(genes_modules[[name]], rownames(vsd.counts_srt))
+  df <- as.data.frame(vsd.counts_srt[ids_present, , drop = FALSE])
+  df$mean_expr <- rowMeans(df)
+  df <- df[order(df$mean_expr, decreasing = TRUE), , drop = FALSE]
+  df$mean_expr <- NULL
+  df
+})
+names(counts_genes) <- names(genes_modules)
+
+# Make one data frame
+counts_df <- bind_rows(counts_genes, .id = "source")
+
+```
+
+### Plot
+
+```{r prepare data}
+# modules_of_interest = c("cyan",
+#                         "darkgreen",
+#                         "darkgrey",
+#                         "ivory",
+#                         "paleturquoise",
+#                         "plum1",
+#                         "royalblue",
+#                         "turquoise",
+#                         "violet")
+
+modules_of_interest = names(counts_genes)
+
+# Pull out list of genes in that module - this step make sense when only a subset of modules are plotted.
+# Otherwise it only make a copy of info2
+submod = info2 |>
+  subset(ModuleColor %in% modules_of_interest)
+
+# Select matching counts
+subexpr = counts_df[submod$Probe,]
+
+submod_df = data.frame(subexpr) |>
+  rownames_to_column(var = "gene_id") |>
+    pivot_longer(-c(gene_id, source)) |>
+      mutate(module = source) |>
+        select(-source)
+```
+
+### Plots for all reps
+
+```{r plot}
+
+out_plot = paste0(tissue.name, power, line.name, "_reps.png")
+
+png(filename = out_plot, width = 2000, height = 16000, res = 300, type = "cairo")
+
+submod_df %>% ggplot(., aes(x=name, y=value, group=gene_id)) +
+  geom_line(aes(color = module),
+            alpha = 0.2) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90)
+  ) +
+  facet_grid(rows = vars(module)) +
+  labs(x = "sample",
+       y = "vst - normalized counts")
+
+dev.off()
+```
+
+## Plots for averaged replications
+
+### Averaging and standardising
+
+```{r avg and std}
+# varMetadata - description of variables
+metadata=data.frame(labelDescription=c("pooled sample", "letter", "tissue", "line", "hour of pooling", "sample number", "day", "replication", "condition", "id", "reads [million]", "batch", "million of reads binned", "chronological time point", "group"), row.names=colnames(coldata_srt))
+
+# metadata
+phenoData=new("AnnotatedDataFrame", data=as.data.frame(coldata_srt), varMetadata=metadata)
+phenoData
+
+## check
+# sampleNames(phenoData)
+# varMetadata(phenoData)
+# head(pData(phenoData))
+
+# make ExpressionSet
+vsd.eset <- ExpressionSet(assayData=vsd.counts_srt, phenoData=phenoData)
+
+# average reps
+average = t(avereps(t(exprs(vsd.eset)), ID = vsd.eset$group)) # output is a matrix
+
+# check
+dim(average)
+dim(vsd.eset)
+
+## make new phenoData
+phenoDataAve = phenoData[!duplicated(vsd.eset$group), ]
+rownames(phenoDataAve)= phenoDataAve$group
+
+pdata_sorted <- pData(phenoDataAve) |>
+  arrange(line, day, time)
+
+# recreate AnnotatedDataFrame:
+pData(phenoDataAve) <- pdata_sorted
+
+# sort counts columns
+average.srt <- average[, rownames(pData(phenoDataAve))]
+
+all(rownames(pData(phenoDataAve) ) %in% colnames(average.srt))
+all(rownames(pData(phenoDataAve) ) == colnames(average.srt))
+
+vsd.eset.ave=ExpressionSet(assayData=average.srt, phenoData=phenoDataAve)
+
+# standardise
+
+vsd.eset.ave.std=standardise(vsd.eset.ave)
+
+# extract expression matrix
+
+counts_ave_std = exprs(vsd.eset.ave.std)
+
+# check
+head(counts_ave_std)
+
+# Make reduced coldata for plotting
+coldata_ave <- coldata_srt[!duplicated(coldata_srt$group), ]
+```
+
+### Split averaged counts by module
+
+```{r counts modules}
+# lista tabelek z genami z modułów, posortowane malejąco
+counts_genes_ave <- lapply(names(genes_modules), function(name) {
+  ids_present <- intersect(genes_modules[[name]], rownames(average))
+  df <- as.data.frame(average[ids_present, , drop = FALSE])
+  df$mean_expr <- rowMeans(df)
+  df <- df[order(df$mean_expr, decreasing = TRUE), , drop = FALSE]
+  df$mean_expr <- NULL
+  df
+})
+names(counts_genes_ave) <- names(genes_modules)
+
+# Make one data frame
+ave_counts_df <- bind_rows(counts_genes_ave, .id = "source")
+```
+
+
+**The same for standardized data**
+
+```{r counts modules std}
+# lista tabelek z genami z modułów, posortowane malejąco
+counts_genes_ave.std <- lapply(names(genes_modules), function(name) {
+  ids_present <- intersect(genes_modules[[name]], rownames(counts_ave_std))
+  df <- as.data.frame(counts_ave_std[ids_present, , drop = FALSE])
+  df$mean_expr <- rowMeans(df)
+  df <- df[order(df$mean_expr, decreasing = TRUE), , drop = FALSE]
+  df$mean_expr <- NULL
+  df
+})
+names(counts_genes_ave.std) <- names(genes_modules)
+
+# Make one data frame
+ave_std_counts_df <- bind_rows(counts_genes_ave.std, .id = "source")
+```
+
+### Plot
+
+```{r plot ave}
+# # modules_of_interest = c("grey60", "violet", "royalblue")
+# modules_of_interest = c("darkturquoise", "violet", "royalblue")
+# 
+# # Pull out list of genes in that module
+# submod = info |>
+#   subset(ModuleColor %in% modules_of_interest) |>
+#     select(Probe, ModuleColor)
+# 
+# # Select matching counts
+# subexpr = ave_counts_df[submod$Probe,]
+# 
+# submod_df = data.frame(subexpr) |>
+#   rownames_to_column(var = "gene_id") |>
+#     pivot_longer(-c(gene_id, source)) |>
+#       mutate(module = source) |>
+#         select(-source)
+# 
+# 
+# png(filename = "test_plot_modules_ave_dkturq.png", width = 2000, height = 1200, res = 300)
+# 
+# submod_df %>% ggplot(., aes(x=name, y=value, group=gene_id)) +
+#   geom_line(aes(color = module),
+#             alpha = 0.2) +
+#   theme_bw() +
+#   theme(
+#     axis.text.x = element_text(angle = 90)
+#   ) +
+#   facet_grid(rows = vars(module)) +
+#   labs(x = "sample",
+#        y = "vst - normalized counts")
+# 
+# dev.off()
+```
+
+## Plots for averaged reps, splitted by line
+
+```{r line-time}
+# Select matching counts
+subexpr = ave_counts_df[submod$Probe,]
+
+submod_df = data.frame(subexpr) |>
+  rownames_to_column(var = "gene_id") |>
+    pivot_longer(names_to = c('line', 'time'), 
+                 names_sep = '_', 
+                 values_to = 'vst_counts', 
+                 -c(gene_id, source)) |>
+      mutate(module = source) |>
+        select(-source)
+```
+
+### Plot
+
+<!-- ```{r} -->
+<!-- png(filename = "test_plot_modules_ave_ln-tm.png", width = 2000, height = 1200, res = 300) -->
+
+<!-- submod_df %>% ggplot(., aes(x=time, y=vst_counts, group=gene_id)) + -->
+<!--   geom_line(aes(color = module), -->
+<!--             alpha = 0.2) + -->
+<!--   theme_bw() + -->
+<!--   theme( -->
+<!--     axis.text.x = element_text(angle = 90) -->
+<!--   ) + -->
+<!--   facet_grid(rows = vars(module), cols = vars(line)) +  -->
+<!--   labs(x = "sample", -->
+<!--        y = "vst - normalized counts") -->
+
+<!-- dev.off() -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- submod_df2 <- submod_df %>% mutate(time = factor(time, levels = unique(time))) -->
+
+<!-- png(filename = "test_plot_modules_ave_ln-tm2.png", width = 2000, height = 1200, res = 300) -->
+
+<!-- submod_df2 %>% -->
+<!--   ggplot(aes(x = time, y = vst_counts, group = gene_id, color = module)) + -->
+<!--   geom_line(alpha = 0.2) + -->
+<!--   theme_bw() + -->
+<!--   theme(axis.text.x = element_text(angle = 90)) + -->
+<!--   facet_grid(rows = vars(module), cols = vars(line)) + -->
+<!--   labs(x = "sample", y = "vst - normalized counts") -->
+<!-- dev.off() -->
+<!-- ``` -->
+
+```{r}
+
+submod_df2 <- submod_df %>% mutate(time = factor(time, levels = unique(time)))
+
+out_plot2 = paste0(tissue.name, power, line.name, "_ave.png")
+
+# Best version, uses module names as colors
+png(filename = out_plot2, width = 2000, height = 16000, res = 300, type = "cairo")
+submod_df2 %>%
+  ggplot(aes(x = time, y = vst_counts, group = gene_id, color = module)) +
+  geom_line(alpha = 0.2) +
+  scale_color_identity() +   # use module value as color names
+  facet_grid(rows = vars(module), cols = vars(line)) +
+  theme_dark() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(x = "sample", y = "vst - normalized counts")
+dev.off()
+```
+
+
+**The same for averaged and standardized reps**
+
+```{r line-time}
+# Select matching counts
+subexpr_std = ave_std_counts_df[submod$Probe,]
+
+submod_df_std = data.frame(subexpr_std) |>
+  rownames_to_column(var = "gene_id") |>
+    pivot_longer(names_to = c('line', 'time'), 
+                 names_sep = '_', 
+                 values_to = 'vst_counts', 
+                 -c(gene_id, source)) |>
+      mutate(module = source) |>
+        select(-source)
+```
+
+```{r}
+
+submod_df2_std <- submod_df_std %>% mutate(time = factor(time, levels = unique(time)))
+
+out_plot3light = paste0(tissue.name, power, line.name, "_ave_std_light.png")
+out_plot3dark = paste0(tissue.name, power, line.name, "_ave_std_dark.png")
+
+# Best version, uses module names as colors
+
+# LIGHT background
+
+png(filename = out_plot3light, width = 2000, height = 16000, res = 300) # LIGHT
+submod_df2_std %>%
+  ggplot(aes(x = time, y = vst_counts, group = gene_id, color = module)) +
+  geom_line(alpha = 0.2) +
+  scale_color_identity() +   # use module value as color names
+  facet_grid(rows = vars(module), cols = vars(line)) +
+  theme_bw() + # LIGHT
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(x = "sample", y = "vst, std counts") +
+  geom_vline(xintercept = 6.5, color = "white", linewidth = 3) # WHITE
+dev.off()
+
+# DARK background
+
+png(filename = out_plot3dark, width = 2000, height = 16000, res = 300) # DARK
+submod_df2_std %>%
+  ggplot(aes(x = time, y = vst_counts, group = gene_id, color = module)) +
+  geom_line(alpha = 0.2) +
+  scale_color_identity() +   # use module value as color names
+  facet_grid(rows = vars(module), cols = vars(line)) +
+  theme_dark() + # better for light module colors # DARK
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(x = "sample", y = "vst, std counts") +
+  geom_vline(xintercept = 6.5, color = "#7f7f7f", linewidth = 3) # DARK
+dev.off()
+```
+
+## References

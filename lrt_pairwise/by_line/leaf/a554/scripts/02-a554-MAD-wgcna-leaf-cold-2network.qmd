@@ -1,0 +1,312 @@
+---
+title: "WGCNA for a554 leaf in cold + regrowth. Part II - network construction."
+format: html
+date: "2026-06-24"
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+Built with R version `r getRversion()`
+
+This script continues [02-a554-MAD-wgcna-leaf-cold-1data.qmd](02-a554-MAD-wgcna-leaf-cold-1data.qmd).
+
+# Data preparation
+
+## Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+#rm(list = ls())
+library(WGCNA)
+
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE)
+# Allow multi-threading within WGCNA.
+enableWGCNAThreads()
+```
+
+```{r suffix}
+rm(list = ls())
+
+tissue.name = "leaf"
+
+line.name = "a554"
+
+```
+
+```{r load}
+in_file = paste0("../rdata-saved/", tissue.name, "-", line.name, "-dataInput.RData")
+
+# Load the data saved in the first part
+load(in_file)
+
+```
+
+## Step-by-step network construction and module detection
+
+### Choosing the soft-thresholding power: analysis of network topology
+
+The three different network types are coded and quoted in `pickSoftThreshold` function.
+Likewise, there is `bicor` version.
+
+:::{.callout-important}
+According to FAQ:
+> We strongly recommend using the argument maxPOutliers = 0.05 or 0.10 whenever the biweight midcorrelation is used
+:::
+
+```{r thresholding powers, cache=TRUE}
+# Choose a set of soft-thresholding powers
+# powers = c(seq(10, 30, by=1))
+powers = c(seq(5, 15, by=1))
+# # Initialize a list to hold the results of scale-free analysis
+# powerTables = vector(mode = "list", length = nSets)
+
+# Call the network topology analysis function for each set in turn
+# for (set in 1:nSets)
+sft = pickSoftThreshold(datExpr, 
+                               powerVector=powers,
+                               verbose = 2, 
+                               networkType = "signed hybrid", 
+                               corFnc = 'bicor', 
+                               corOptions = list(maxPOutliers = 0.05),
+                               moreNetworkConcepts = TRUE)
+# additional measures ("moreNetworkConcepts") described in https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1000117
+# Density : close to 1, all genes are strongly correlated, ~ 0.5 more ambigous correlations
+# Centralization: close to 1, one gene strongly correlated with all others which in turn have negative correlations
+# Heterogeneity: can be used to measure variation of connectivity of genes.
+
+# Optionally
+# networkType = "signed", corFnc = 'bicor'
+# networkType = "signed hybrid", corFnc = 'bicor'
+
+collectGarbage()
+```
+
+Plotting results
+```{r soft-thr, fig.show='hold', cache=TRUE, fig.width=12, fig.height=7, dpi=300, dev='png'}
+# sizeGrWindow(9, 5) # used in tutorial but here omitted
+par(mfrow = c(2,2))
+cex1 = 0.7
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+  xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+  main = paste("Scale independence"));
+  text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+  labels=powers, cex=cex1, col="red")
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.8,col="blue")
+
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+  xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+  main = paste("Mean connectivity"))
+  text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1, col="red")
+abline(h=50,col="blue")
+  
+# Median connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,6],
+  xlab="Soft Threshold (power)",ylab="Median connectivity", type="n",
+  main = paste("Median connectivity"))
+  text(sft$fitIndices[,1], sft$fitIndices[,6], labels=powers, cex=cex1, col="red")
+abline(h=10,col="blue")
+  
+# Max connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,7],
+  xlab="Soft Threshold (power)",ylab="Max connectivity", type="n",
+  main = paste("Max connectivity"))
+  text(sft$fitIndices[,1], sft$fitIndices[,7], labels=powers, cex=cex1, col="red")
+```
+
+:::{.callout-important}
+From [thread](https://support.bioconductor.org/p/121622/#121653).
+Peter Langfelder (the package developer) regarding "mean connectivity" advises:
+> I aim for mean connectivity around 100 or less (typically between 30-50); median connectivity usually ends up around 10.
+
+Also, the FAQ states that for "signed hybrid" power should by < 15.
+Using "signed hybrid", potentially power 13 is good, based on "SFT.R.sq", "mean.k" and "median.k", averaged across samples.
+However mean connectivity is notably lower than advised by author.
+
+:::
+
+```{r save-intermediate}
+out_file = paste0("../rdata-saved/", tissue.name, "-", line.name, "-before-adj.RDa")
+
+save.image(out_file)
+```
+
+<!-- ################ START of code executed externally ########################## -->
+
+
+### Calculation of network adjacencies
+
+:::{.callout-note}
+As they are computationally demanding the adjacencies and TOMsimilarity calculations were moved to external R file for batch running [TOMs_powers1line.R](TOMs_powers1line.R).
+:::
+
+### Calculation of topological overlap
+
+:::{.callout-important}
+`TOMtype` is different than `networkType`, so using `networkType = "signed"` does not imply using `TOMtype = "signed"`!!! [post](https://support.bioconductor.org/p/73814/#73894)
+:::
+
+<!-- ################ END of code executed externally ########################## -->
+
+```{r load TOM}
+rm(list = ls())
+
+power = 13
+
+line.name = "a554"
+
+tissue.name = "leaf"
+
+in_file = paste0('../rdata-saved/power', power, tissue.name, "-", line.name, '.RDa')
+
+load(in_file)
+
+in_file2 = paste0("../rdata-saved/", tissue.name, "-", line.name, "-before-adj.RDa")
+
+load(in_file2)
+```
+
+
+### Clustering and module identification
+
+Calculate the dissimilarity:
+```{r}
+dissTOM = 1-TOM
+```
+
+We now use hierarchical clustering to produce a hierarchical clustering tree (dendrogram) of genes.
+
+```{r dendro, fig.width=12, fig.height=9}
+# Call the hierarchical clustering function
+geneTree = hclust(as.dist(dissTOM), method = "average")
+# Plot the resulting clustering tree (dendrogram)
+# sizeGrWindow(12,9) # For interactive work only.
+plot(geneTree, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity",
+  labels = FALSE, hang = 0.04)
+```
+
+
+In the clustering tree (dendrogram), each leaf, that is a short vertical line, corresponds to a gene. Branches of the dendrogram group together densely interconnected, highly co-expressed genes. Module identification amounts to the identification of individual branches (”cutting the branches off the dendrogram”). There are several methods for branch cutting; our standard method is the Dynamic Tree Cut from the package `dynamicTreeCut`. The next snippet of code illustrates its use.
+
+```{r modules}
+# We like large modules, so we set the minimum module size relatively high:
+minModuleSize = 30
+# Module identification using dynamic tree cut:
+dynamicMods = cutreeDynamic(dendro = geneTree, 
+                            distM = dissTOM,
+                            deepSplit = 2, # The higher the value the more and smaller clusters will be produced. 
+                            cutHeight = 0.995,
+                            pamRespectsDendro = FALSE, # ? default is TRUE but in manual FALSE is given
+                            minClusterSize = minModuleSize)
+
+# quick summary of the module detection
+table(dynamicMods)
+```
+
+The Dynamic Tree Cut returned 117! proper modules. The label 0 (grey) is
+reserved for genes not assigned to any of the modules. The following code plots the consensus gene dendrogram
+together with the preliminary module colors:
+
+```{r consensus dendrogram, fig.width=8, fig.height=6, dpi=300, dev='png'}
+# Convert numeric lables into colors
+dynamicColors = labels2colors(dynamicMods)
+table(dynamicColors)
+# Plot the dendrogram and colors underneath
+
+plotDendroAndColors(geneTree, 
+                    dynamicColors, 
+                    "Dynamic Tree Cut",
+                    dendroLabels = FALSE, 
+                    hang = 0.03,
+                    addGuide = TRUE, 
+                    guideHang = 0.05,
+                    main = "Gene dendrogram and module colors")
+```
+
+### Merging of modules whose expression profiles are very similar
+
+The Dynamic Tree Cut may identify modules whose expression profiles are very similar. It may be prudent
+to merge such modules since their genes are highly co-expressed. To quantify co-expression similarity of entire
+modules, we calculate their eigengenes (MEs) and cluster them on their consensus correlation, that is the minimum
+correlation across the two sets:
+
+```{r consensus module eigengenes, fig.width=7, fig.height=6, dpi=300, dev='png'}
+# Calculate eigengenes
+MEList = moduleEigengenes(datExpr, colors = dynamicColors)
+MEs = MEList$eigengenes
+# Calculate dissimilarity of module eigengenes
+MEDiss = 1-cor(MEs)
+# Cluster module eigengenes
+METree = hclust(as.dist(MEDiss), method = "average");
+# Plot the result
+# sizeGrWindow(7, 6) # For interactive work only.
+plot(METree, main = "Clustering of module eigengenes",
+  xlab = "", sub = "", cex = 0.4)
+# We choose a height cut of 0.25, corresponding to correlation of 0.75, to merge.
+## In fact determined after plotting, here included to avoid error.
+MEDissThres = 0.25
+# Plot the cut line into the dendrogram
+abline(h=MEDissThres, col = "red")
+```
+
+Some clusters can be merged.
+
+```{r consensus merge modules}
+# Call an automatic merging function
+merge = mergeCloseModules(datExpr, dynamicColors, cutHeight = MEDissThres, verbose = 3)
+# The merged module colors
+mergedColors = merge$colors
+
+# 3. TUTAJ WKLEJASZ KOD NAPRAWIAJĄCY ETYKIETY (Zamiast starego match())
+# =====================================================================
+customLevels = c("grey", setdiff(unique(mergedColors), "grey"))
+moduleLabels = as.numeric(factor(mergedColors, levels = customLevels)) - 1
+
+# Eigengenes of the new merged modules:
+mergedMEs = merge$newMEs
+```
+
+To see what the merging did to our module colors, we plot the gene dendrogram again, with the original and merged module colors underneath:
+
+```{r dendro-compare, fig.width=12, fig.height=9}
+# sizeGrWindow(12, 9) # For interactive work only.
+plotDendroAndColors(geneTree, 
+                    cbind(dynamicColors, mergedColors),
+                    c("Dynamic Tree Cut", "Merged dynamic"),
+                    dendroLabels = FALSE, 
+                    hang = 0.03,
+                    addGuide = TRUE, 
+                    guideHang = 0.05)
+```
+
+
+```{r merge stat}
+table(mergedColors)
+```
+
+After merge there are 28 modules.
+
+In the subsequent analysis, we will use the merged module colors in `mergedColors`. We save the relevant variables:
+
+```{r}
+# Rename to moduleColors
+moduleColors = mergedColors
+
+MEs = mergedMEs
+
+# Save module colors and labels for use in subsequent parts
+out_file2 = paste0('../rdata-saved/networkConstruction', power, tissue.name, "-", line.name, '.RDa')
+
+save(MEs, moduleLabels, moduleColors, geneTree, file = out_file2)
+```
+
+:::{.callout-note}
+Proceed to [02-a554-MAD-wgcna-leaf-cold-3export.qmd](02-a554-MAD-wgcna-leaf-cold-3export.qmd).
+:::
+
+
+# References

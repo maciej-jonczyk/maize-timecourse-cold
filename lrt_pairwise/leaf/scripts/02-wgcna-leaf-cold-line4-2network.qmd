@@ -1,0 +1,448 @@
+---
+title: "WGCNA for leaf in cold + regrowth, consensus test for four lines. Part II - network construction."
+format: html
+date: "2026-06-07"
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+Built with R version `r getRversion()`
+
+This script continues [02-MAD-wgcna-leaf-cold-line4-1data.qmd](02-MAD-wgcna-leaf-cold-line4-1data.qmd).
+
+# Data preparation
+
+## Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+#rm(list = ls())
+library(WGCNA)
+
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE)
+# Allow multi-threading within WGCNA.
+enableWGCNAThreads()
+```
+
+:::{.callout-important}
+Using MAD-filtered data (above 1st quartile).
+:::
+
+```{r load}
+rm(list = ls())
+# Load the data saved in the first part
+lnames = load(file = "../rdata-saved/wgcna/Consensus-dataInput-MAD025.RData")
+#The variable lnames contains the names of loaded variables.
+lnames
+# Get the number of sets in the multiExpr structure.
+nSets = checkSets(multiExpr)$nSets
+```
+
+## Step-by-step network construction and module detection
+
+### Choosing the soft-thresholding power: analysis of network topology
+
+The three different network types are coded and quoted in `pickSoftThreshold` function.
+Likewise, there is `bicor` version.
+
+:::{.callout-important}
+According to FAQ:
+> We strongly recommend using the argument maxPOutliers = 0.05 or 0.10 whenever the biweight midcorrelation is used
+:::
+
+```{r thresholding powers, cache=TRUE}
+# Choose a set of soft-thresholding powers
+# powers = c(seq(10, 30, by=1))
+powers = c(seq(5, 15, by=1))
+# Initialize a list to hold the results of scale-free analysis
+powerTables = vector(mode = "list", length = nSets)
+
+# Call the network topology analysis function for each set in turn
+for (set in 1:nSets)
+powerTables[[set]] = list(data = pickSoftThreshold(multiExpr[[set]]$data, 
+                                                   powerVector=powers,
+                                                   verbose = 2, 
+                                                   networkType = "signed hybrid", 
+                                                   corFnc = 'bicor', 
+                                                   corOptions = list(maxPOutliers = 0.05),
+                                                   moreNetworkConcepts = TRUE)[[2]])
+# additional measures ("moreNetworkConcepts") described in https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1000117
+# Density : close to 1, all genes are strongly correlated, ~ 0.5 more ambigous correlations
+# Centralization: close to 1, one gene strongly correlated with all others which in turn have negative correlations
+# Heterogeneity: can be used to measure variation of connectivity of genes.
+
+# Optionally
+# networkType = "signed", corFnc = 'bicor'
+# networkType = "signed hybrid", corFnc = 'bicor'
+
+collectGarbage()
+```
+
+```{r plot thresholds, fig.width=8, fig.height=6, dpi=300, dev='png'}
+# Plot the results:
+colors = c("black", "red", 'blue', 'violet')
+# Will plot these columns of the returned scale free analysis tables
+plotCols = c(2,5,6,7)
+colNames = c("Scale Free Topology Model Fit", "Mean connectivity", "Median connectivity",
+"Max connectivity")
+
+# Get the minima and maxima of the plotted points
+ylim = matrix(NA, nrow = 2, ncol = 4);
+for (set in 1:nSets)
+{
+for (col in 1:length(plotCols))
+{
+ylim[1, col] = min(ylim[1, col], powerTables[[set]]$data[, plotCols[col]], na.rm = TRUE)
+ylim[2, col] = max(ylim[2, col], powerTables[[set]]$data[, plotCols[col]], na.rm = TRUE)
+}
+}
+
+# Plot the quantities in the chosen columns vs. the soft thresholding power
+# sizeGrWindow(8, 6) # not used here
+par(mfcol = c(2,2))
+par(mar = c(4.2, 4.2 , 2.2, 0.5))
+cex1 = 0.7;
+for (col in 1:length(plotCols)) for (set in 1:nSets)
+{
+if (set==1)
+{
+plot(powerTables[[set]]$data[,1], -sign(powerTables[[set]]$data[,3])*powerTables[[set]]$data[,2],
+xlab="Soft Threshold (power)",ylab=colNames[col],type="n", ylim = ylim[, col],
+main = colNames[col]);
+addGrid();
+}
+if (col==1)
+{
+text(powerTables[[set]]$data[,1], -sign(powerTables[[set]]$data[,3])*powerTables[[set]]$data[,2],
+labels=powers,cex=cex1,col=colors[set])
+} else
+text(powerTables[[set]]$data[,1], powerTables[[set]]$data[,plotCols[col]],
+labels=powers,cex=cex1,col=colors[set])
+if (col==1)
+{
+legend("bottomright", legend = setLabels, col = colors, pch = 20) ;
+} else
+legend("topright", legend = setLabels, col = colors, pch = 20) ;
+}
+```
+
+:::{.callout-important}
+From [thread](https://support.bioconductor.org/p/121622/#121653).
+Peter Langfelder (the package developer) regarding "mean connectivity" advises:
+> I aim for mean connectivity around 100 or less (typically between 30-50); median connectivity usually ends up around 10.
+
+Also, the FAQ states that for "signed hybrid" power should by < 15.
+Using "signed hybrid", potentially power 12 or 13 is good, based on "SFT.R.sq", "mean.k" and "median.k", averaged across samples.
+12 is choosen as mean and median connectivity are more close to recommended values.
+
+:::
+
+```{r save-intermediate}
+save.image('../rdata-saved/wgcna/leaf-before-adjacencies.RDa')
+```
+
+<!-- ################ START of code executed externally ########################## -->
+
+
+### Calculation of network adjacencies
+
+:::{.callout-note}
+As they are computationally demanding the adjacencies and TOMsimilarity calculations were moved to external R file for batch running [TOMs_powers.R](/media/mj/TOSHIBA EXT/project1-ctrl-stat/lrt_pairwise/leaf/scripts/TOMs_powers.R).
+:::
+
+### Calculation of topological overlap
+
+:::{.callout-important}
+`TOMtype` is different than `networkType`, so using `networkType = "signed"` does not imply using `TOMtype = "signed"`!!! [post](https://support.bioconductor.org/p/73814/#73894)
+:::
+
+<!-- ################ END of code executed externally ########################## -->
+
+### Scaling of Topological Overlap Matrices to make them comparable across sets
+
+Topological Overlap Matrices of different data sets may have different statistical properties. For example, the
+TOM in the one data may be systematically lower than the TOM in the other. Since consensus is defined
+as the component-wise minimum of the all TOMs, a bias may result. Here we illustrate a simple scaling that
+mitigates the effect of different statistical properties to some degree. We scale the all TOMs such that the 95th
+percentile equals the 95th percentile of one of the TOMs (a554)
+
+```{r load2}
+rm(list=ls())
+load('../rdata-saved/wgcna/leaf-before-adjacencies.RDa')
+load('../rdata-saved/wgcna/power12.RDa')
+```
+
+```{r scale TOM, cache=TRUE}
+# Define the reference percentile
+scaleP = 0.95
+set.seed(1)
+# Sample sufficiently large number of TOM entries
+nSamplesTOM = as.integer(1/(1-scaleP) * 1000)
+# Choose the sampled TOM entries
+scaleSample = sample(nGenes*(nGenes-1)/2, size = nSamplesTOM)
+TOMScalingSamples = list()
+# These are TOM values at reference percentile
+scaleQuant = rep(1, nSets)
+# Scaling powers to equalize reference TOM values
+scalePowers = rep(1, nSets)
+
+# Loop over sets
+for (set in 1:nSets)
+{
+  # Select the sampled TOM entries
+  TOMScalingSamples[[set]] = as.dist(TOM[set, , ])[scaleSample]
+  # Calculate the 95th percentile
+  scaleQuant[set] = quantile(TOMScalingSamples[[set]],
+                             probs = scaleP, 
+                             type = 8)
+  # Scale the TOMs to the first
+  
+  if (set>1)
+    {
+    scalePowers[set] = log(scaleQuant[1])/log(scaleQuant[set])
+    TOM[set, ,] = TOM[set, ,]^scalePowers[set]
+    }
+}
+```
+
+The array `TOM` now contains the scaled TOMs. To see what the scaling achieved, we form a pairwise quantile-quantile plots
+of the topological overlaps before and after scaling
+
+```{r qqplot TOM, fig.width=6, fig.height=6, dpi=600, dev='png'}
+par(mfrow = c(3, 2), mar = c(4,4,2,1))  # 2 wiersze x 3 kolumny
+
+# For plotting, also scale the sampled TOM entries
+scaledTOMSamples = list();
+for (set in 1:nSets)
+  scaledTOMSamples[[set]] = TOMScalingSamples[[set]]^scalePowers[set]
+# Open a suitably sized graphics window
+# sizeGrWindow(6,6)
+# qq plot of the unscaled samples
+qqUnscaled = qqplot(TOMScalingSamples[[1]], TOMScalingSamples[[2]], plot.it = TRUE, cex = 0.6,
+  xlab = paste("TOM in", setLabels[1]), ylab = paste("TOM in", setLabels[2]),
+  main = "Q-Q plot of TOM", pch = 20)
+# qq plot of the scaled samples
+qqScaled = qqplot(scaledTOMSamples[[1]], scaledTOMSamples[[2]], plot.it = FALSE)
+points(qqScaled$x, qqScaled$y, col = "red", cex = 0.6, pch = 20)
+abline(a=0, b=1, col = "blue")
+legend("topleft", legend = c("Unscaled TOM", "Scaled TOM"), pch = 20, col = c("black", "red"))
+
+qqUnscaled = qqplot(TOMScalingSamples[[1]], TOMScalingSamples[[3]], plot.it = TRUE, cex = 0.6,
+xlab = paste("TOM in", setLabels[1]), ylab = paste("TOM in", setLabels[3]),
+main = "Q-Q plot of TOM", pch = 20)
+# qq plot of the scaled samples
+qqScaled = qqplot(scaledTOMSamples[[1]], scaledTOMSamples[[3]], plot.it = FALSE)
+points(qqScaled$x, qqScaled$y, col = "red", cex = 0.6, pch = 20)
+abline(a=0, b=1, col = "blue")
+legend("topleft", legend = c("Unscaled TOM", "Scaled TOM"), pch = 20, col = c("black", "red"))
+
+qqUnscaled = qqplot(TOMScalingSamples[[1]], TOMScalingSamples[[4]], plot.it = TRUE, cex = 0.6,
+  xlab = paste("TOM in", setLabels[1]), ylab = paste("TOM in", setLabels[4]),
+  main = "Q-Q plot of TOM", pch = 20)
+# qq plot of the scaled samples
+qqScaled = qqplot(scaledTOMSamples[[1]], scaledTOMSamples[[4]], plot.it = FALSE)
+points(qqScaled$x, qqScaled$y, col = "red", cex = 0.6, pch = 20)
+abline(a=0, b=1, col = "blue")
+legend("topleft", legend = c("Unscaled TOM", "Scaled TOM"), pch = 20, col = c("black", "red"))
+
+qqUnscaled = qqplot(TOMScalingSamples[[2]], TOMScalingSamples[[3]], plot.it = TRUE, cex = 0.6,
+  xlab = paste("TOM in", setLabels[2]), ylab = paste("TOM in", setLabels[3]),
+  main = "Q-Q plot of TOM", pch = 20)
+# qq plot of the scaled samples
+qqScaled = qqplot(scaledTOMSamples[[2]], scaledTOMSamples[[3]], plot.it = FALSE)
+points(qqScaled$x, qqScaled$y, col = "red", cex = 0.6, pch = 20)
+abline(a=0, b=1, col = "blue")
+legend("topleft", legend = c("Unscaled TOM", "Scaled TOM"), pch = 20, col = c("black", "red"))
+
+qqUnscaled = qqplot(TOMScalingSamples[[2]], TOMScalingSamples[[4]], plot.it = TRUE, cex = 0.6,
+  xlab = paste("TOM in", setLabels[2]), ylab = paste("TOM in", setLabels[4]),
+  main = "Q-Q plot of TOM", pch = 20)
+# qq plot of the scaled samples
+qqScaled = qqplot(scaledTOMSamples[[2]], scaledTOMSamples[[4]], plot.it = FALSE)
+points(qqScaled$x, qqScaled$y, col = "red", cex = 0.6, pch = 20)
+abline(a=0, b=1, col = "blue")
+legend("topleft", legend = c("Unscaled TOM", "Scaled TOM"), pch = 20, col = c("black", "red"))
+
+qqUnscaled = qqplot(TOMScalingSamples[[3]], TOMScalingSamples[[4]], plot.it = TRUE, cex = 0.6,
+  xlab = paste("TOM in", setLabels[3]), ylab = paste("TOM in", setLabels[4]),
+  main = "Q-Q plot of TOM", pch = 20)
+# qq plot of the scaled samples
+qqScaled = qqplot(scaledTOMSamples[[3]], scaledTOMSamples[[4]], plot.it = FALSE)
+points(qqScaled$x, qqScaled$y, col = "red", cex = 0.6, pch = 20)
+abline(a=0, b=1, col = "blue")
+legend("topleft", legend = c("Unscaled TOM", "Scaled TOM"), pch = 20, col = c("black", "red"))
+
+par(mfrow = c(1,1))  # przywróć domyślny układ
+```
+
+Scaling improved data congruence in some samples only. In others even slightly lowered congruence.
+
+### Calculation of consensus Topological Overlap
+
+We now calculate the consensus Topological Overlap by taking the component-wise ("parallel") minimum of the
+TOMs in individual sets:
+
+```{r consensus TOM}
+consensusTOM = pmin(TOM[1,,], TOM[2,,], TOM[3,,], TOM[4,,])
+```
+
+Thus, the consensus topological overlap of two genes is only large if the corresponding entries in the four sets are also large.
+
+### Clustering and module identification
+
+We use the consensus TOM as input to hierarchical clustering, and identify modules in the resulting dendrogram
+using the Dynamic Tree Cut algorithm [@Langfelder2007].
+
+```{r consensus clustering}
+# Clustering
+consTree = hclust(as.dist(1-consensusTOM), method = "average")
+# We like large modules, so we set the minimum module size relatively high:
+minModuleSize = 30
+# Module identification using dynamic tree cut:
+unmergedLabels = cutreeDynamic(dendro = consTree, 
+                               distM = 1-consensusTOM,
+                               deepSplit = 2, # The higher the value the more and smaller clusters will be produced. 
+                               cutHeight = 0.995,
+                               minClusterSize = minModuleSize,
+                               pamRespectsDendro = FALSE ) # ? default is TRUE but in manual FALSE is given
+
+unmergedColors = labels2colors(unmergedLabels)
+
+# To see a quick summary of the module detection, we use table(unmergedLabels)
+table(unmergedLabels)
+```
+
+The Dynamic Tree Cut returned 79 proper modules. The label 0 (grey) is
+reserved for genes not assigned to any of the modules. The following code plots the consensus gene dendrogram
+together with the preliminary module colors:
+
+```{r consensus dendrogram, fig.width=8, fig.height=6, dpi=300, dev='png'}
+plotDendroAndColors(consTree, 
+                    unmergedColors, 
+                    "Dynamic Tree Cut",
+                    dendroLabels = FALSE, 
+                    hang = 0.03,
+                    addGuide = TRUE, 
+                    guideHang = 0.05)
+```
+
+### Merging of modules whose expression profiles are very similar
+
+The Dynamic Tree Cut may identify modules whose expression profiles are very similar. It may be prudent
+to merge such modules since their genes are highly co-expressed. To quantify co-expression similarity of entire
+modules, we calculate their eigengenes (MEs) and cluster them on their consensus correlation, that is the minimum
+correlation across the two sets:
+
+```{r consensus module eigengenes, fig.width=7, fig.height=6, dpi=300, dev='png'}
+# Calculate module eigengenes
+unmergedMEs = multiSetMEs(multiExpr, 
+                          colors = NULL, 
+                          universalColors = unmergedColors)
+# Calculate consensus dissimilarity of consensus module eigengenes
+consMEDiss = consensusMEDissimilarity(unmergedMEs)
+# Cluster consensus modules
+consMETree = hclust(as.dist(consMEDiss), method = "average")
+# Plot the result
+plot(consMETree, main = "Consensus clustering of consensus module eigengenes",
+xlab = "", sub = "")
+abline(h=0.25, col = "red")
+abline(h=0.3, col = "blue")
+```
+
+Some clusters can be merged.
+
+```{r consensus merge modules}
+#| output: false
+#| message: false
+merge = mergeCloseModules(multiExpr, 
+                          unmergedLabels, 
+                          cutHeight = 0.25, # gives more modules (alternative is 0.3)
+                          verbose = 3,
+                          corFnc = 'bicor', 
+                          corOptions = list(maxPOutliers = 0.05)
+                          )
+
+# The variable merge contains various information; we will need the following
+# Numeric module labels
+moduleLabels = merge$colors
+# Convert labels to colors
+moduleColors = labels2colors(moduleLabels)
+# Eigengenes of the new merged modules:
+consMEs = merge$newMEs
+
+save(consensusTOM, moduleColors, file = "../rdata-saved/wgcna/after_merge025.RDa")
+```
+
+```{r merged histograms, fig.width=7, fig.height=6, dpi=300, dev='png'}
+# multiExpr  - list of expression in sets
+# mergedColors - vector of colors after merge (module names after merge)
+
+mergedColors = moduleColors
+
+# 1) Compute module eigengenes for merged modules
+mergedMEs <- multiSetMEs(multiExpr, 
+                         colors = NULL, 
+                         universalColors = mergedColors)
+
+# 2) Compute consensus dissimilarity (1 - MEs correlation)
+consMEDiss <- consensusMEDissimilarity(mergedMEs)
+
+# 3) Cluster modules
+consMETree <- hclust(as.dist(consMEDiss), method = "average")
+
+# 4) Plot dendrogram
+par(mfrow = c(1,1))
+plot(consMETree, main = "Consensus clustering of merged consensus module eigengenes",
+     xlab = "", sub = "")
+```
+
+:::{.callout-note}
+How to label modules by color name?
+:::
+
+```{r dendro by set, fig.width=16, fig.height=4, dpi=300, dev='png'}
+par(mfrow = c(2,2))
+plotEigengeneNetworks(consMEs, 
+                      setLabels = setLabels, 
+                      marDendro = c(0,4,2,0), 
+                      plotHeatmaps = FALSE)
+```
+
+```{r heat by set, fig.width=6, fig.height=5, dpi=300, dev='png'}
+plotEigengeneNetworks(consMEs[[1]]$data, 
+                      setLabels = setLabels, 
+                      marHeatmap = c(3,4,2,2), 
+                      plotDendrograms = FALSE)
+```
+
+Lastly, we plot the gene dendrogram again, this time with both the unmerged and the merged module colors:
+
+```{r consensus dendrogram merged, fig.width=9, fig.height=6, dpi=300, dev='png'}
+plotDendroAndColors(consTree, 
+                    cbind(unmergedColors, moduleColors),
+                    c("Unmerged", "Merged"),
+                    dendroLabels = FALSE, 
+                    hang = 0.03,
+                    addGuide = TRUE, 
+                    guideHang = 0.05)
+```
+
+```{r merge stat}
+table(mergedColors)
+```
+
+After merge there are 28 modules.
+
+```{r save image}
+# saving results up to module merging
+rm(list = c('consensusTOM', 'TOM', 'adjacencies')) # these files are already saved elsewhere
+save.image('../rdata-saved/wgcna/cons12merged025.RDa')
+```
+
+We now save the information necessary in the subsequent parts of the tutorial:
+
+```{r save data}
+save(consMEs, moduleColors, moduleLabels, consTree, file = "../rdata-saved/wgcna/Consensus-NetworkConstruction-cold-man12mrg025.RData")
+```

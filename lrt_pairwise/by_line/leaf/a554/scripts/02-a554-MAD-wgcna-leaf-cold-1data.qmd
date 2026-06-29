@@ -1,0 +1,290 @@
+---
+title: "WGCNA for a554 leaf in cold + regrowth. Part I - data input. Filtering on MAD".
+format: html
+date: "2026-06-24"
+execute:
+  fig-format: png
+  fig.dpi: 300
+---
+
+Built with R version `r getRversion()`
+
+# Rationale
+
+6 timepoints are available per line per variant (cold / control). There are 3 biological replications so in all we have 18 samples per line per variant. "time of day" (three letters) * "day" (1, 2) * "biological replication" (1 to 3) $3 * 2 * 3 = 18$ samples. Times 2 variants (temperature) gives 36 samples per line.
+The sample size of joined temperature variants is sufficient according to FAQ ('at least 30').
+
+The aim is to perform WGCNA - separate per line.
+
+
+:::{.callout-important}
+The results of per line analysis will be used as input to `modulePreservation` function.
+So for each line the *same set of genes* is used - the one filtered in [consensus analysis](../../../../leaf/scripts/02-MAD-wgcna-leaf-cold-line4-1data.qmd).
+
+In the linked script two filtering steps were performed:
+1. At least 10 counts in at least 90% samples.
+2. MAD above 1st quartile.
+:::
+
+# Data preparation
+
+## Environment cleaning and set-up
+
+```{r setup, include = FALSE}
+# load required packages
+library(GenomicRanges)
+library(WGCNA)
+library(dplyr)
+library(DESeq2)
+```
+
+
+```{r instal-packages}
+#| eval: false
+#| output: false
+#| message: false
+# Clean working directory, if needed
+rm(list=ls())
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("impute")
+BiocManager::install("preprocessCore")
+BiocManager::install("GO.db")
+BiocManager::install("AnnotationDbi")
+
+install.packages("WGCNA")
+```
+
+## Read-in data
+
+```{r read data, cache=TRUE}
+load("../../../../../input-data/rdata/counts_and_metadata.RDa")
+
+# previously prepared range data
+load("../../../../../input-data/rdata/ranges.RDa")
+
+# transform Factors to chr/int where appropriate
+coldata2 = coldata |> mutate(across(letter : line, as.character), 
+                             condition = as.character(condition), 
+                             across(time : rep, as.integer))
+
+# Overwrite original object to keep further code unchanged
+coldata = coldata2
+
+# Check if files are in concert
+all(rownames(coldata) %in% colnames(cts))
+all(rownames(coldata) == colnames(cts))
+```
+
+## Subset leaf and a554 data
+
+
+```{r suffix}
+
+tissue.name = "leaf"
+
+line.name = "a554"
+
+```
+
+
+Subsetting is done at the level of raw data (counts and coldata).
+```{r subset}
+# subset coldata
+coldata.leaf = coldata |> filter(tissue == tissue.name & line == line.name)
+
+# check
+dim(coldata.leaf)
+
+# vector of sample names to keep - needed to select columns from count file
+keep.leaf=rownames(coldata.leaf)
+
+# check - only samples named "la5..." should remain
+keep.leaf
+length(keep.leaf)
+
+# subsetting counts
+cts.leaf=subset(cts, select=keep.leaf)
+
+# check
+dim(cts.leaf)
+colnames(cts.leaf)
+
+# Check if counts and coldata are in concert
+all(rownames(coldata.leaf) %in% colnames(cts.leaf))
+all(rownames(coldata.leaf) == colnames(cts.leaf))
+
+keep = c("coldata.leaf", "cts.leaf", "gzakresy", "tissue.name", "line.name")
+
+rm(list = setdiff(ls(), keep))
+```
+
+## Data preparation
+
+DESeq data set must be created to perform VST.
+
+```{r factors}
+#| output: false
+#| message: false
+
+## Prepare grouping variable for use in model in dds
+
+# add variable describing chronology of samples
+coldata.leaf$timepoint = coldata.leaf$time + (coldata.leaf$day - 1) * 3
+
+# Adding grouping variable to easily analyse all comparisons needed
+coldata.leaf$group <- factor(paste0(coldata.leaf$line, "_", coldata.leaf$timepoint))
+
+# check
+str(coldata.leaf)
+```
+
+## Create DEseq Data Set
+
+```{r dds, cache=TRUE}
+#| output: false
+#| message: false
+
+# create dataset, design included only for command completeness, different will be used in DE analysis
+dds.leaf = DESeqDataSetFromMatrix(countData = cts.leaf, colData = coldata.leaf, rowRanges = gzakresy, design = ~ group)
+```
+
+## Pre-filtering
+
+:::{.callout-important}
+Using genes kept in consensus analysis [consensus analysis](../../../../leaf/scripts/02-MAD-wgcna-leaf-cold-line4-1data.qmd).
+:::
+
+```{r genes to keep}
+load('../../../../leaf/rdata-saved/wgcna/genes2keep.RDa')
+
+keep.consensus2 <- names(keep.consensus)[keep.consensus]
+```
+
+```{r filter}
+
+dds.leaf.f <- dds.leaf[keep.consensus2,]
+
+# check
+dim(dds.leaf.f)
+
+# what percent of genes remained?
+100*(dim(dds.leaf.f)[1]/dim(dds.leaf)[1])
+
+# [1] 13492    36
+# [1] 30.45392
+```
+
+## Normalization
+
+According to [post](https://www.biostars.org/p/459013/#459016) `varianceStabilizingTransformation` not `vst` is used. Design is provided here only because it is required in `dds` object. It makes no sense using `blind=FALSE` here.
+
+```{r normalize, cache=TRUE}
+vsd.leaf = varianceStabilizingTransformation(dds.leaf.f, blind=TRUE)
+
+rm(list = setdiff(ls(), c('vsd.leaf', 'coldata.leaf', 'line.name', 'tissue.name')))
+```
+
+## Extract normalized counts
+
+```{r extract normalized counts}
+vsd.counts = assay(vsd.leaf)
+
+coldata = colData(vsd.leaf)
+
+# check
+dim(vsd.counts)
+dim(coldata)
+```
+
+# WGCNA analysis
+
+## Data input, cleaning & preprocessing
+
+
+```{r}
+#| output: false
+
+options(stringsAsFactors = FALSE) # Important option, do not omit!
+enableWGCNAThreads()
+```
+
+## Reformat data
+
+```{r format data}
+dim(vsd.counts)
+
+# the data contains additional variables - next code removes them and transposes (very important!) the data
+datExpr = as.data.frame(t(vsd.counts))
+
+# check row and col names
+head(names(datExpr))
+head(rownames(datExpr))
+
+```
+
+## Checking data for excessive missing values and identification of outlier samples
+
+```{r check missing}
+# Check the data for missing values
+gsg = goodSamplesGenes(datExpr, verbose = 3)
+gsg$allOK
+```
+
+## Clustering of samples to see if there are obvious outliers
+
+```{r fig.width=12, fig.height=9}
+sampleTree = hclust(dist(datExpr), method = "average")
+
+pdf(file = "sampleClustering.pdf", width = 12, height = 9);
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5,
+cex.axis = 1.5, cex.main = 2)
+abline(h = 15, col = "red")
+dev.off()
+```
+
+There are no outliers, samples clusters by temperature but not perfectly.
+
+# Loading category data
+
+It is essentially coldata information. May be used in plots.
+
+```{r cats}
+
+# select interesting columne
+datTraits = coldata.leaf[, (names(coldata.leaf) %in% c('time', 'day', 'rep'))]
+
+```
+
+We now have the expression data in the variable `datExpr`, and the corresponding clinical traits in the variable
+`datTraits`. Before we continue with network construction and module detection, we visualize how the clinical traits
+relate to the sample dendrogram.
+
+```{r fig.width=12, fig.height=9}
+# Re-cluster samples
+sampleTree2 = hclust(dist(datExpr), method = "average")
+# Convert traits to a color representation: white means low, red means high, grey means missing entry
+traitColors = numbers2colors(datTraits, signed = FALSE)
+# Plot the sample dendrogram and the colors underneath.
+plotDendroAndColors(sampleTree2, traitColors,
+groupLabels = names(datTraits),
+main = "Sample dendrogram and trait heatmap (a554)")
+```
+
+```{r save}
+
+out_file = paste0("../rdata-saved/", tissue.name, "-", line.name, "-dataInput.RData")
+
+save(datExpr, datTraits, file = out_file)
+
+```
+
+:::{.callout-note}
+Proceed to [02-a554-MAD-wgcna-leaf-cold-2network.qmd](02-a554-MAD-wgcna-leaf-cold-2network.qmd).
+:::
+
+
+# References
